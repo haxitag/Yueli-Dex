@@ -1,0 +1,23 @@
+{
+  "name": "@haxitag/yueli-dex-provider-http",
+  "version": "0.1.0",
+  "description": "Standard self-hosted jev-choice/v1 HTTP provider for Yueli DEX",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@haxitag/yueli-dex-plugin-sdk": "*"
+  },
+  "license": "UNLICENSED"
+}

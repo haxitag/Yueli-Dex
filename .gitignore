@@ -5,3 +5,18 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Project documentation (internal planning notes, not for public repo)
+docs/
+
+# Next.js build output
+.next/
+out/
+
+# Playground build artifacts
+packages/playground/.next/
+packages/playground/dist/
+

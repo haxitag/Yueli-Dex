@@ -1,0 +1,20 @@
+{
+  "name": "@haxitag/yueli-dex-plugin-sdk",
+  "version": "0.1.0",
+  "description": "Versioned provider, template, modeler, and context-provider contracts for Yueli DEX",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "license": "UNLICENSED"
+}

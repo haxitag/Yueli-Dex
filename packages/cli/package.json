@@ -1,0 +1,22 @@
+{
+  "name": "@haxitag/yueli-dex-cli",
+  "version": "0.1.0",
+  "description": "CLI for Yueli DEX: template/config validation, provider probes, fixture execution",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "yueli-dex": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@haxitag/yueli-dex": "*",
+    "@haxitag/yueli-dex-plugin-sdk": "*",
+    "@haxitag/yueli-dex-provider-http": "*"
+  },
+  "license": "UNLICENSED"
+}
