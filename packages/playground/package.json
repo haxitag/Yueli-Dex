@@ -5,9 +5,9 @@
   "description": "Interactive playground for debugging Yueli DEX decisions and provider calls",
   "type": "module",
   "scripts": {
-    "dev": "next dev -p 3456",
+    "dev": "next dev -p 34567",
     "build": "next build",
-    "start": "next start -p 3456",
+    "start": "next start -p 34567",
     "lint": "next lint"
   },
   "dependencies": {
