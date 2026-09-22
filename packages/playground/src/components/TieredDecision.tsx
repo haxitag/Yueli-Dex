@@ -205,7 +205,7 @@ function describeThen(then: unknown, locale: "zh" | "en"): string {
 export function TieredDecision() {
   const { locale, t } = useI18n();
   const tierDefs = locale === "en" ? TIERS_EN : TIERS;
-  const [chainName, setChainName] = useState("Choice-shaped use cases");
+  const [chainName, setChainName] = useState("choice-shaped-use-cases");
   const [tier, setTier] = useState<Tier>("L1");
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [themeFilter, setThemeFilter] = useState<string | null>(null);
