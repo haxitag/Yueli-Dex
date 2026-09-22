@@ -15,6 +15,34 @@ dimensions, chosen by cross-analyzing the Jev ecosystem aggregators
 Theme vocabulary: `customer-operations`, `communication`,
 `agent-infrastructure`, `developer-tooling`, `security`, `automation`.
 
+## Industry directions（行业八方向分类）
+
+The catalog also speaks the industry's eight-direction taxonomy of Jev-class
+model use cases (distilled from 28 real application cases). Use
+`findDirectionTemplates(directionId)` or `SCENARIO_DIRECTIONS` to browse in
+this vocabulary:
+
+| direction id | 中文 | 说明 | 预期先行规模化 |
+| --- | --- | --- | --- |
+| `agent-dispatch` | Agent 调度 | 选择模型/工具/Skill；直接处理 vs 更强模型 vs 转人工 | ✅ |
+| `memory-context` | 记忆与上下文管理 | 筛选历史、重排检索；区分「内容相似」与「此刻适用」 | ✅ |
+| `code-quality` | 代码与软件质量检查 | PR 审查/QA；找出值得追加检查的地方再确认 | ✅ |
+| `computer-use` | 浏览器与电脑操作 | 有限动作候选中选下一步 | |
+| `ops-triage` | 业务分流与内容审核 | 工单/意图/审核/人工复核排序——商业落地最扎实 | ✅ |
+| `data-processing` | 搜索与数据处理 | 难穷举成规则、可举例说明的筛选与匹配 | |
+| `realtime-assist` | 实时交互辅助 | 判断「现在需要提供什么帮助」；成败在误打扰率 | |
+| `game-control` | 游戏与复杂控制实验 | 封闭动作空间 + 风险评级；长期可靠性待验证 | |
+
+The four directions marked ✅ share: **判断高频发生、候选范围有限、需要
+理解语境、错误可被发现和补救** — the profile where a Jev-class decision
+pays for itself first.
+
+A note on context (later Wittgenstein): the same word — 「紧急」/「urgent」 —
+maps to different handling in support, meetings, and code incidents. A good
+template therefore states the business it lives in, what counts as urgent
+*there* (criteria are examples, not thresholds), and which action each
+judgment triggers.
+
 ## Catalog
 
 | id | 主题 | 场景 | 用例 | 效用 |
@@ -35,6 +63,12 @@ Theme vocabulary: `customer-operations`, `communication`,
 | `graph-traverse` | developer-tooling | graph-hop | 每个节点选下一个结构移动：dive/branch/stay/backtrack | Blink / neo4jev / agent-desktop 模式；深度预算与已找到目标走本地短路 |
 | `extract-field` | developer-tooling | structured-extract | 从 ≤4 个预筛候选中选匹配项或 not_found | jev-mcp `jev_extract` / jev-curate 模式；抽取值逐字保留，永不改写 |
 | `startup-pitch` | agent-infrastructure | idea-evaluation | 对创业想法裁决：kill/fix/ship | killmyidea 模式；信息不足走 needs_review 而非硬猜 |
+| `agent-handoff` | agent-infrastructure | agent-dispatch | 任务处理路径：直接处理/升级更强模型/转人工 | 减少无效调用与等待；同一「紧急」在不同业务对应不同处置，criteria 承载业务自身示例 |
+| `memory-recall` | agent-infrastructure | memory-recall-gating | 逐条记忆裁决：recall/skip | 区分「内容相似」与「此刻适用」；替代 k 近邻堆砌上下文 |
+| `qa-check-targeting` | developer-tooling | qa-check-targeting | 逐文件裁决是否值得追加检查 | 让检查预算与风险成比例；测试/编码模型和人类只确认被标记处 |
+| `review-queue` | customer-operations | review-queue-priority | 人工复核队列排序：深度 × 时机 | 稀缺审阅时间落在错误代价最高处；商业落地最扎实方向的收口环节 |
+| `record-filter` | automation | nl-record-filter | 按自然语言规则逐条筛选记录 | 处理难穷举成关键词、可举例说明的条件；入选记录原样透传 |
+| `proactive-assist` | communication | proactive-assist | 逐时刻裁决：现在提示/保持沉默/仅记录 | 产品成败取决于误打扰率；默认沉默，打扰必须自己挣得时机 |
 
 Each template's `meta.references` records the ecosystem evidence (source
 projects / aggregator categories) that validates demand.
@@ -59,11 +93,13 @@ choice, and actions emitted as `ActionIntent` requests (never executions).
 ## How to pick a template
 
 ```ts
-import { findTemplates } from "@haxitag/yueli-dex-templates-core";
+import { findTemplates, findDirectionTemplates } from "@haxitag/yueli-dex-templates-core";
 
 findTemplates({ theme: "security" });                    // → security-gate, content-moderation
 findTemplates({ scenario: "routing" });                  // → support-triage, email-triage, model-routing, …
 findTemplates({ utility: "verbatim" });                  // → context-compaction, chunk-triage, extract-field
+findDirectionTemplates("realtime-assist");               // → proactive-assist
+findDirectionTemplates("ops-triage");                    // → support-triage, email-triage, content-moderation, review-queue
 ```
 
 Pick by scenario first; fall back to theme; read `utility` to confirm the

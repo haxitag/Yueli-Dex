@@ -17,6 +17,14 @@ import type { TemplateDefinition } from "./types.js";
  *   Model Routing (35), Context GC (27).
  * - tryjevai.com preset use cases: support routing, agent tool selection,
  *   risk assessment, agent loop decision, urgency detection.
+ * - Industry taxonomy of 28 Jev-class application cases collapsed into 8
+ *   directions: agent dispatch, memory & context management, code & software
+ *   quality, browser & computer use, business triage & moderation, search &
+ *   data processing, realtime interactive assistance, games & complex control.
+ *   The four directions expected to scale first (agent dispatch, business
+ *   triage, memory screening, quality checking) share: high-frequency
+ *   judgments, bounded candidate sets, context dependence, and
+ *   discoverable/remediable errors.
  *
  * Each template carries a `meta` block labeled on four dimensions:
  * 主题 (theme) / 场景 (scenario) / 用例 (use case) / 效用 (utility).
@@ -1103,6 +1111,458 @@ const templates: readonly TemplateDefinition[] = [
           },
           // Long enough not to short-circuit. Fixture documents behavior:
           // no local rule fires, falls through to provider.
+        },
+      ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The six templates below close coverage gaps against the industry's
+  // eight-direction taxonomy of Jev-class model use cases (agent dispatch,
+  // memory & context, code & QA, computer use, business triage & moderation,
+  // search & data, realtime assistance, games & complex control).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "agent-handoff",
+    version: "1.0.0",
+    meta: {
+      theme: "agent-infrastructure",
+      scenario: "agent-dispatch",
+      useCase:
+        "Decide how to handle a task: process it directly, escalate to a stronger model, or hand off to a human",
+      utility:
+        "Cuts wasted calls and wall-clock waiting; the same label (e.g. 'urgent') maps to different handling per business, so criteria carry the business's own examples rather than a fixed threshold",
+      references: [
+        "Industry direction #1: Agent 调度 (model / tool / skill selection, human handoff)",
+        "tryjevai.com use case family (Agent orchestration)",
+      ],
+      exampleInput: {
+        task: "Refactor the billing module to use the new invoice schema",
+        availableSkills: ["code-edit", "docs-search"],
+        budgetRemainingUsd: 0.8,
+      },
+    },
+    state: {
+      from: {
+        task: "$.task",
+        availableSkills: "$.availableSkills",
+        budgetRemainingUsd: "$.budgetRemainingUsd",
+      },
+    },
+    choices: [
+      {
+        id: "dispatch",
+        instructions:
+          "How should this task be handled right now? Judge by task difficulty vs. local capability, blast radius of getting it wrong, and remaining budget.",
+        criteria: {
+          handle_locally:
+            "Routine, well-bounded work the current agent and skills can complete reliably",
+          escalate_model:
+            "Requires deeper reasoning or domain knowledge; a stronger model should take it before a human ever sees it",
+          handoff_human:
+            "Irreversible, high-stakes, or outside policy; a person must decide",
+          needs_review: "Task description is too vague to judge",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 6 },
+    actions: {
+      dispatch: {
+        handle_locally: { kind: "agent.dispatch", target: "self" },
+        escalate_model: { kind: "agent.dispatch", target: "stronger-model" },
+        handoff_human: { kind: "agent.dispatch", target: "human" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "irreversible-refactor",
+          input: {
+            task: "Drop and recreate the production invoices table with the new schema",
+            availableSkills: ["db-migrate"],
+            budgetRemainingUsd: 2.5,
+          },
+          expected: { dispatch: "handoff_human" },
+        },
+      ],
+    },
+  },
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "memory-recall",
+    version: "1.0.0",
+    meta: {
+      theme: "agent-infrastructure",
+      scenario: "memory-recall-gating",
+      useCase:
+        "For each candidate memory entry, decide whether to recall it into the current task context or skip it",
+      utility:
+        "Separates 'topically similar' from 'applicable right now' — the more an agent remembers, the more retrieval noise costs; gate each entry instead of stuffing the k-nearest neighbors",
+      references: [
+        "Industry direction #2: 记忆与上下文管理 (history screening, retrieval re-ranking)",
+        "fast-jev-compaction / Winnow family (context budgeting)",
+      ],
+      exampleInput: {
+        task: "Fix a refund double-charge bug reported by an EU enterprise customer",
+        memoryEntry: {
+          summary: "EU customer filed a double-charge refund in March; resolution SLA is 2h",
+          recordedAt: "2026-03-04",
+          tags: ["billing", "eu"],
+        },
+      },
+    },
+    state: {
+      from: {
+        task: "$.task",
+        memorySummary: "$.memoryEntry.summary",
+        memoryRecordedAt: "$.memoryEntry.recordedAt",
+        memoryTags: "$.memoryEntry.tags",
+      },
+    },
+    choices: [
+      {
+        id: "recall",
+        instructions:
+          "Should this memory be recalled for the current task? Judge applicability to THIS task, not mere topic overlap.",
+        criteria: {
+          recall:
+            "Directly informs the current task: same entities, same policy, or a precedent the task should follow",
+          defer:
+            "Not needed for the current step, but will matter for an expected next step — keep it warm for retrieval",
+          skip:
+            "Topically similar but not applicable now — older policy, different product area, or background noise",
+          needs_review: "Cannot tell from the summary alone",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 6 },
+    actions: {
+      recall: {
+        recall: { kind: "memory.recall", mode: "inject" },
+        defer: { kind: "memory.recall", mode: "warm" },
+        skip: { kind: "memory.recall", mode: "skip" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "same-entity-precedent",
+          input: {
+            task: "Fix a refund double-charge bug reported by an EU enterprise customer",
+            memoryEntry: {
+              summary: "EU enterprise double-charge cases qualify for the 2h priority SLA",
+              recordedAt: "2026-08-01",
+              tags: ["billing", "eu", "sla"],
+            },
+          },
+          expected: { recall: "recall" },
+        },
+      ],
+    },
+  },
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "qa-check-targeting",
+    version: "1.0.0",
+    meta: {
+      theme: "developer-tooling",
+      scenario: "qa-check-targeting",
+      useCase:
+        "For each changed file or area, decide whether it merits additional checks — extra tests, a coding-model review, or human confirmation",
+      utility:
+        "Finds where extra checking actually pays off instead of blanket-gating every diff; test/coding models and humans then confirm the flagged spots, keeping review budget proportional to risk",
+      references: [
+        "Industry direction #3: 代码与软件质量检查 (PR review, code scoring, QA triage)",
+        "jev-review / diffjury / clean-code-review family",
+      ],
+      exampleInput: {
+        file: "packages/core/src/routing.ts",
+        changeKind: "logic-rewrite",
+        diffSummary:
+          "Replaces the round-robin tie-break in provider selection with a latency-weighted score",
+        coverage: "78%",
+      },
+    },
+    state: {
+      from: {
+        file: "$.file",
+        changeKind: "$.changeKind",
+        diffSummary: "$.diffSummary",
+        coverage: "$.coverage",
+      },
+    },
+    choices: [
+      {
+        id: "verdict",
+        instructions:
+          "Does this change merit additional checking beyond the default CI? Consider blast radius, logic vs. cosmetic nature, and coverage around the touched lines.",
+        criteria: {
+          add_checks:
+            "Behavioral logic changed with real failure blast radius — queue targeted tests and a model review",
+          human_confirm:
+            "Subtle or policy-laden change a model review cannot settle alone — a human should look",
+          pass:
+            "Cosmetic, generated, or fully covered change; default CI is sufficient",
+          needs_review: "Diff summary is too thin to judge",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 6 },
+    actions: {
+      verdict: {
+        add_checks: { kind: "qa.target", action: "extra-checks" },
+        human_confirm: { kind: "qa.target", action: "human-confirm" },
+        pass: { kind: "qa.target", action: "default-ci" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "cosmetic-readme-change",
+          input: {
+            file: "README.md",
+            changeKind: "docs",
+            diffSummary: "Fixes a typo in the install section",
+            coverage: "n/a",
+          },
+          expected: { verdict: "pass" },
+        },
+      ],
+    },
+  },
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "review-queue",
+    version: "1.0.0",
+    meta: {
+      theme: "customer-operations",
+      scenario: "review-queue-priority",
+      useCase:
+        "Rank items in a human review queue: how deep should the reviewer go, and how soon",
+      utility:
+        "Orders the human-escalation backlog so scarce reviewer time lands where mistakes are expensive; high-frequency calls, explicit flow, easily checkable outcomes — the most commercially grounded Jev direction",
+      references: [
+        "Industry direction #5: 业务分流与内容审核 (human review ranking)",
+        "slop-filter / moderation queue patterns",
+      ],
+      exampleInput: {
+        item: "Payout hold released automatically for a flagged seller",
+        flags: ["payout-auto-release", "seller-history-clean"],
+        businessImpact: "monetary",
+      },
+    },
+    state: {
+      from: {
+        item: "$.item",
+        flags: "$.flags",
+        businessImpact: "$.businessImpact",
+      },
+    },
+    choices: [
+      {
+        id: "depth",
+        instructions: "How deep should the human review of this item go?",
+        criteria: {
+          deep:
+            "Monetary/legal/reputational impact or conflicting signals — senior reviewer, full context",
+          standard:
+            "Ordinary flagged item within known patterns — standard reviewer pass",
+          quick:
+            "Low-stakes, likely auto-resolvable — a glance or batch confirm",
+          needs_review: "Item description insufficient to rank",
+        },
+      },
+      {
+        id: "urgency",
+        instructions: "How soon must a human look at this item?",
+        criteria: {
+          now: "Active harm or SLA clock is running — interrupt the queue",
+          today: "Should be handled within the working day",
+          backlog: "Can wait for the next batch window",
+          needs_review: "Not enough evidence to judge timing",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 8 },
+    actions: {
+      depth: {
+        deep: { kind: "review.rank", depth: "deep" },
+        standard: { kind: "review.rank", depth: "standard" },
+        quick: { kind: "review.rank", depth: "quick" },
+        needs_review: { kind: "review.request" },
+      },
+      urgency: {
+        now: { kind: "review.rank", urgency: "now" },
+        today: { kind: "review.rank", urgency: "today" },
+        backlog: { kind: "review.rank", urgency: "backlog" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "monetary-impact-deep-now",
+          input: {
+            item: "Payout hold released automatically for a flagged seller",
+            flags: ["payout-auto-release", "seller-history-clean"],
+            businessImpact: "monetary",
+          },
+          expected: { depth: "deep", urgency: "now" },
+        },
+      ],
+    },
+  },
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "record-filter",
+    version: "1.0.0",
+    meta: {
+      theme: "automation",
+      scenario: "nl-record-filter",
+      useCase:
+        "Apply a natural-language filtering rule to each record: include, exclude, or send to manual review",
+      utility:
+        "Handles conditions that cannot be enumerated as keyword rules but CAN be shown by concrete examples — entity matching, fuzzy scope, per-record judgment; the chosen records are passed through untouched",
+      references: [
+        "Industry direction #6: 搜索与数据处理 (NL filtering, entity match, SQL condition expansion)",
+        "jev-curate / jev-mcp extraction family",
+      ],
+      exampleInput: {
+        rule: "Keep records about EU enterprise customers disputing a duplicate charge",
+        record: {
+          customer: "Acme GmbH",
+          region: "eu",
+          plan: "enterprise",
+          note: "Customer reports being billed twice for the March invoice",
+        },
+      },
+    },
+    state: {
+      from: {
+        rule: "$.rule",
+        customer: "$.record.customer",
+        region: "$.record.region",
+        plan: "$.record.plan",
+        note: "$.record.note",
+      },
+    },
+    choices: [
+      {
+        id: "filter",
+        instructions:
+          "Does this record satisfy the rule? Match the rule's intent, not just its keywords.",
+        criteria: {
+          include: "The record clearly falls inside the rule's scope",
+          exclude: "The record clearly falls outside the rule's scope",
+          rule_gap:
+            "The record sits on a boundary the rule does not cover — suggest refining the rule itself instead of guessing per-record",
+          needs_review: "Ambiguous — likely relevant but the rule's intent is not met cleanly",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 6 },
+    actions: {
+      filter: {
+        include: { kind: "record.filter", decision: "include" },
+        exclude: { kind: "record.filter", decision: "exclude" },
+        rule_gap: { kind: "record.filter", decision: "rule-gap" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "eu-enterprise-duplicate-charge",
+          input: {
+            rule: "Keep records about EU enterprise customers disputing a duplicate charge",
+            record: {
+              customer: "Acme GmbH",
+              region: "eu",
+              plan: "enterprise",
+              note: "Customer reports being billed twice for the March invoice",
+            },
+          },
+          expected: { filter: "include" },
+        },
+      ],
+    },
+  },
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "proactive-assist",
+    version: "1.0.0",
+    meta: {
+      theme: "communication",
+      scenario: "proactive-assist",
+      useCase:
+        "Per moment, decide whether to surface a suggestion now, stay silent, or only log it — meeting observation, instant hints, autocomplete, predictive launchers",
+      utility:
+        "Product success hinges on the disturbance rate: staying silent while the user is in flow beats a helpful but untimely interruption; every surfaced suggestion must be on-task and skippable in one glance",
+      references: [
+        "Industry direction #7: 实时交互辅助 (meeting observer, proactive suggestions, predictive launchers)",
+        "Emoji-candidate / autocomplete ranking patterns",
+      ],
+      exampleInput: {
+        moment: "user has been stuck on the same compile error for 6 minutes",
+        userFocus: "debugging a TypeScript build",
+        candidateSuggestion: "Offer the known fix for TS2355 in this codebase",
+        consentLevel: "ambient",
+      },
+    },
+    state: {
+      from: {
+        moment: "$.moment",
+        userFocus: "$.userFocus",
+        candidateSuggestion: "$.candidateSuggestion",
+        consentLevel: "$.consentLevel",
+      },
+    },
+    choices: [
+      {
+        id: "assist",
+        instructions:
+          "Should the assistant surface this suggestion now? The default posture is silence; interruption must earn its slot.",
+        criteria: {
+          offer_now:
+            "User is blocked or paused AND the suggestion is squarely on-task — showing it now saves real time",
+          stay_silent:
+            "User is in flow, or the suggestion is only tangentially related — do not disturb",
+          log_only:
+            "Useful later but not now — record it for when the user asks or pauses",
+          needs_review: "Cannot read the user's current state",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 6 },
+    actions: {
+      assist: {
+        offer_now: { kind: "assist.surface", mode: "offer-now" },
+        stay_silent: { kind: "assist.surface", mode: "silent" },
+        log_only: { kind: "assist.surface", mode: "log-only" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "blocked-user-on-task",
+          input: {
+            moment: "user has been stuck on the same compile error for 6 minutes",
+            userFocus: "debugging a TypeScript build",
+            candidateSuggestion: "Offer the known fix for TS2355 in this codebase",
+            consentLevel: "ambient",
+          },
+          expected: { assist: "offer_now" },
         },
       ],
     },

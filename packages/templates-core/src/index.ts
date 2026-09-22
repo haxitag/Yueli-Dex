@@ -16,7 +16,14 @@
  */
 
 export { TEMPLATES, TEMPLATES_CORE_PACK } from "./templates.js";
-export { CATALOG, THEME_LABELS, findTemplates } from "./catalog.js";
+export {
+  CATALOG,
+  THEME_LABELS,
+  SCENARIO_DIRECTIONS,
+  findTemplates,
+  findDirectionTemplates,
+} from "./catalog.js";
+export type { ScenarioDirection } from "./catalog.js";
 export { LOCAL_RULE_SETS, getLocalRuleSets } from "./rules.js";
 export { buildAllCallExamples, buildCallExample } from "./examples.js";
 export type {
