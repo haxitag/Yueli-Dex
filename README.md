@@ -120,4 +120,6 @@ cd packages/playground && npm run dev   # http://localhost:34567
 
 ## License
 
-No project license has been selected yet.
+MIT — see the [`LICENSE`](LICENSE) file for the full text.
+
+Copyright (c) 2026 Yueli DEX contributors.
