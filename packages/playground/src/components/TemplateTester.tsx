@@ -346,7 +346,7 @@ export function TemplateTester() {
                 {copied ? t("tt.copied") : t("tt.copy")}
               </button>
             </div>
-            <pre className="code-block text-dex-text whitespace-pre-wrap break-all max-h-[340px] overflow-auto text-xs">
+            <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[340px] overflow-auto text-xs">
               {selected?.example ?? t("tt.examplePlaceholder")}
             </pre>
           </section>
@@ -357,7 +357,7 @@ export function TemplateTester() {
             {compiledRequest ? (
               <div>
                 <p className="text-xs font-medium text-dex-muted mb-1">{t("tt.step.compile")}</p>
-                <pre className="code-block text-dex-text whitespace-pre-wrap break-all max-h-[180px] overflow-auto text-xs">
+                <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[180px] overflow-auto text-xs">
                   {JSON.stringify(compiledRequest, null, 2)}
                 </pre>
               </div>
@@ -432,7 +432,7 @@ export function TemplateTester() {
             {intents ? (
               <div className="mt-3">
                 <p className="text-xs font-medium text-dex-muted mb-1">ActionIntents</p>
-                <pre className="code-block text-dex-text whitespace-pre-wrap break-all max-h-[200px] overflow-auto text-xs">
+                <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[200px] overflow-auto text-xs">
                   {JSON.stringify(intents, null, 2)}
                 </pre>
               </div>

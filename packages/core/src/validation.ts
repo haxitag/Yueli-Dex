@@ -6,6 +6,7 @@ import type {
   JsonValue,
 } from "@haxitag/yueli-dex-plugin-sdk";
 import { DexError } from "./errors.js";
+import { MAX_CANONICALIZE_DEPTH } from "./utils.js";
 
 const MAX_OPTIONS = 255;
 const PROBABILITY_TOLERANCE = 1e-6;
@@ -359,16 +360,19 @@ function validateChoiceAnswer(
 /* JSON value type guard                                               */
 /* ------------------------------------------------------------------ */
 
-function isJsonValue(value: unknown): value is JsonValue {
+function isJsonValue(value: unknown, depth = 0): value is JsonValue {
+  // P0: bound recursion so adversarially-deep input surfaces as a validation
+  // error instead of an uncontrolled RangeError (stack overflow).
+  if (depth > MAX_CANONICALIZE_DEPTH) return false;
   if (value === null) return true;
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return true;
   }
   if (Array.isArray(value)) {
-    return value.every(isJsonValue);
+    return value.every((v) => isJsonValue(v, depth + 1));
   }
   if (isPlainObject(value)) {
-    return Object.values(value).every(isJsonValue);
+    return Object.values(value).every((v) => isJsonValue(v, depth + 1));
   }
   return false;
 }

@@ -1,7 +1,71 @@
 import { readFileSync } from "node:fs";
 import { createHttpProvider } from "@haxitag/yueli-dex-provider-http";
 import { createDex, validateChoiceRequest, DexError } from "@haxitag/yueli-dex";
-import type { ChoiceRequest } from "@haxitag/yueli-dex-plugin-sdk";
+import type { ChoiceRequest, ChoiceProvider } from "@haxitag/yueli-dex-plugin-sdk";
+
+/**
+ * Build a provider from CLI config. P1: the previous implementation
+ * hard-coded `createHttpProvider` for every entry, so `kind: "mock"` (or any
+ * non-http kind) silently became a broken http provider and failed with a
+ * misleading NO_ELIGIBLE_PROVIDER / credential hint.
+ */
+function buildCliProvider(p: {
+  id: string;
+  kind?: string;
+  endpoint?: string;
+  apiKey?: string;
+}): ReturnType<typeof createHttpProvider> {
+  const kind = p.kind ?? "http";
+  switch (kind) {
+    case "http":
+      if (!p.endpoint) {
+        throw new DexError(
+          "INVALID_CHOICE_REQUEST",
+          `Provider "${p.id}" (kind http) requires an "endpoint" field`,
+          { decisionId: "cli-run", recoveryHint: 'Add "endpoint": "https://…" to the provider entry.' },
+        );
+      }
+      return createHttpProvider({ id: p.id, endpoint: p.endpoint, apiKey: p.apiKey });
+    case "mock":
+      // Zero-credential deterministic provider — same contract as the
+      // playground's built-in mock. Good for local CLI testing.
+      return createCliMockProvider(p.id);
+    default:
+      throw new DexError(
+        "INVALID_CHOICE_REQUEST",
+        `Provider "${p.id}" has unsupported kind "${kind}" (cli run supports: http, mock)`,
+        { decisionId: "cli-run", recoveryHint: 'Use kind "http" with an endpoint, or kind "mock" for local testing.' },
+      );
+  }
+}
+
+/** Minimal deterministic mock provider for CLI runs (no network, no deps). */
+function createCliMockProvider(id: string): ChoiceProvider {
+  return {
+    manifest: {
+      id,
+      apiVersion: "yueli-dex-plugin/v1" as const,
+      kind: "provider" as const,
+      version: "0.1.0",
+      capabilities: ["choice"],
+    },
+    health: async () => ({ available: true, observedP95LatencyMs: 1 }),
+    execute: async (request: ChoiceRequest) => {
+      const answers: Record<
+        string,
+        { type: "choice"; choice: string; confidence: number; probabilities: Record<string, number> }
+      > = {};
+      for (const [qid, q] of Object.entries(request.questions)) {
+        const choices = Object.keys(q.criteria);
+        const first = choices[0] ?? "needs_review";
+        const probabilities: Record<string, number> = {};
+        for (const c of choices) probabilities[c] = c === first ? 0.6 : 0.4 / Math.max(1, choices.length - 1);
+        answers[qid] = { type: "choice", choice: first, confidence: 0.6, probabilities };
+      }
+      return { model: "yueli-dex/cli-mock@1", answers, usage: { input_tokens: 1, output_tokens: 1 } };
+    },
+  };
+}
 
 interface CliArgs {
   readonly command: string;
@@ -106,9 +170,11 @@ async function cmdProbe(endpoint: string): Promise<number> {
 }
 
 async function cmdRun(configPath: string, requestPath: string, route?: string): Promise<number> {
+  // Declared outside try so the catch path can surface the failure receipt.
+  let receipt: unknown;
   try {
     const config = loadJson<{
-      providers: Array<{ id: string; endpoint: string; apiKey?: string }>;
+      providers: Array<{ id: string; kind?: string; endpoint?: string; apiKey?: string }>;
       routing: {
         default: {
           providerIds: string[];
@@ -119,9 +185,7 @@ async function cmdRun(configPath: string, requestPath: string, route?: string): 
       };
     }>(configPath);
 
-    const providers = config.providers.map((p) =>
-      createHttpProvider({ id: p.id, endpoint: p.endpoint, apiKey: p.apiKey }),
-    );
+    const providers = config.providers.map((p) => buildCliProvider(p));
 
     const dex = createDex({
       providers,
@@ -138,8 +202,13 @@ async function cmdRun(configPath: string, requestPath: string, route?: string): 
     const rawRequest = loadJson<ChoiceRequest>(requestPath);
     validateChoiceRequest(rawRequest, "cli-run");
 
-    let receipt: unknown;
+    receipt = undefined;
     dex.on("choice.completed", (e) => {
+      receipt = e.receipt;
+    });
+    // P1: capture failure receipts too, so `run` failures still print the
+    // full execution trace (attempts, timing, rules) for debugging.
+    dex.on("choice.failed", (e) => {
       receipt = e.receipt;
     });
 
@@ -151,6 +220,111 @@ async function cmdRun(configPath: string, requestPath: string, route?: string): 
     if (err instanceof DexError) {
       console.error(`✗ DexError [${err.code}]: ${err.message}`);
       if (err.recoveryHint) console.error(`  hint: ${err.recoveryHint}`);
+      // P1: surface the failure receipt (attempts / routing trace) when one
+      // was emitted, so post-mortems don't lose the provider attempt trail.
+      if (receipt !== undefined) {
+        console.error(`  receipt: ${JSON.stringify(receipt)}`);
+      }
+    } else {
+      console.error(`✗ ${(err as Error).message}`);
+      if (receipt !== undefined) {
+        console.error(`  receipt: ${JSON.stringify(receipt)}`);
+      }
+    }
+    return 1;
+  }
+}
+
+async function cmdFixtures(): Promise<number> {
+  try {
+    // P2-1: run every fixture attached to the templates-core pack.
+    // Fixtures without a local rule short-circuit will fail because the CLI
+    // has no provider configured — that's expected and reported as such.
+    const { TEMPLATES_CORE_PACK, CATALOG, LOCAL_RULE_SETS } = await import(
+      "@haxitag/yueli-dex-templates-core"
+    );
+    const stubProvider = createHttpProvider({
+      id: "stub",
+      endpoint: "http://127.0.0.1:1",
+    });
+    // Collect every local rule set so short-circuit fixtures pass without
+    // hitting the provider.
+    const allRuleSets = Object.values(LOCAL_RULE_SETS).flat();
+    const dex = createDex({
+      providers: [stubProvider],
+      routing: {
+        default: {
+          providerIds: ["stub"],
+          maxAttempts: 1,
+          circuitFailureThreshold: 10,
+          circuitCooldownMs: 60_000,
+        },
+      },
+      templates: [TEMPLATES_CORE_PACK],
+      ruleSets: allRuleSets,
+    });
+    let total = 0;
+    let shortCircuit = 0;
+    let needsProvider = 0;
+    const byTemplate = new Map<string, { name: string; input: unknown; result: string }[]>();
+
+    for (const entry of CATALOG) {
+      if (!entry.fixtureCount || entry.fixtureCount === 0) continue;
+      const fixtures = dex.templates.getFixtures(entry.id) ?? [];
+      const results: typeof byTemplate extends Map<string, infer V> ? V : never = [];
+      for (const fixture of fixtures) {
+        total += 1;
+        try {
+          const req = await dex.templates.prepare({
+            template: entry.id,
+            input: fixture.input,
+          });
+          const response = await dex.choice(req);
+          // Verify expected
+          let matched = true;
+          if (fixture.expected) {
+            for (const [qid, expectedChoice] of Object.entries(fixture.expected)) {
+              const actual = response.answers[qid as never]?.choice;
+              if (actual !== expectedChoice) matched = false;
+            }
+          }
+          if (matched) {
+            shortCircuit += 1;
+            results.push({ name: fixture.name, input: fixture.input, result: "pass" });
+          } else {
+            results.push({ name: fixture.name, input: fixture.input, result: "mismatch" });
+          }
+        } catch (err) {
+          // Most likely cause: no provider configured and no local rule
+          // short-circuit fired. That's a known limitation when running
+          // locally without provider credentials.
+          const code = err && typeof err === "object" && "code" in err ? (err as { code: string }).code : "unknown";
+          if (code === "NO_ELIGIBLE_PROVIDER") {
+            needsProvider += 1;
+            results.push({ name: fixture.name, input: fixture.input, result: "needs_provider" });
+          } else {
+            results.push({ name: fixture.name, input: fixture.input, result: `error:${code}` });
+          }
+        }
+      }
+      byTemplate.set(entry.id, results);
+    }
+
+    const report = {
+      total,
+      shortCircuit,
+      needsProvider,
+      errors: total - shortCircuit - needsProvider,
+      templates: Array.from(byTemplate.entries()).map(([id, fixtures]) => ({
+        template: id,
+        fixtures,
+      })),
+    };
+    console.log(JSON.stringify(report, null, 2));
+    return 0;
+  } catch (err) {
+    if (err instanceof DexError) {
+      console.error(`✗ DexError [${err.code}]: ${err.message}`);
     } else {
       console.error(`✗ ${(err as Error).message}`);
     }
@@ -167,6 +341,7 @@ Usage:
   yueli-dex probe <endpoint>           Probe a jev-choice/v1 provider endpoint
   yueli-dex run <config> <request>     Execute a fixture request against providers
                                        [--route <name>]
+  yueli-dex fixtures                   Run all template fixtures (P2-1 evaluation)
   yueli-dex help                       Show this help
 `);
 }
@@ -208,6 +383,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
       return cmdRun(config, request, flags.route);
     }
+    case "fixtures":
+      return cmdFixtures();
     case "help":
     case "--help":
     case "-h":

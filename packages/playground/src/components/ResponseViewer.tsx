@@ -100,7 +100,7 @@ export function ResponseViewer({ result, loading }: ResponseViewerProps) {
       <div className="p-4 max-h-[600px] overflow-auto">
         {view === "response" && (
           result.response ? (
-            <pre className="code-block text-dex-text whitespace-pre-wrap break-all">
+            <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere]">
               {JSON.stringify(result.response, null, 2)}
             </pre>
           ) : (
@@ -109,7 +109,7 @@ export function ResponseViewer({ result, loading }: ResponseViewerProps) {
         )}
         {view === "receipt" && (
           result.receipt ? (
-            <pre className="code-block text-dex-text whitespace-pre-wrap break-all">
+            <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere]">
               {JSON.stringify(result.receipt, null, 2)}
             </pre>
           ) : (

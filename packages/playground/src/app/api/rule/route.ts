@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { createRuleEngine } from "@haxitag/yueli-dex";
 import type { RuleSet } from "@haxitag/yueli-dex";
 import { isDexError } from "@haxitag/yueli-dex";
+import { readJsonBody } from "@/lib/http";
 import type { ChoiceRequest } from "@haxitag/yueli-dex-plugin-sdk";
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = await request.json();
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body as Record<string, unknown>;
   const { ruleSet, input, compiledRequest, phase } = body as {
     ruleSet: { id: string; version: string; scope: RuleSet["scope"]; document: unknown };
     input: unknown;
@@ -14,6 +17,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   };
 
   try {
+    if (!ruleSet || typeof ruleSet !== "object") {
+      return NextResponse.json({ error: "ruleSet object required" }, { status: 400 });
+    }
     const engine = createRuleEngine([{
       id: ruleSet.id,
       version: ruleSet.version,

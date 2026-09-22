@@ -3,7 +3,7 @@ import type {
   ChoiceRequest,
   ChoiceResponse,
 } from "@haxitag/yueli-dex-plugin-sdk";
-import { DexError, ProviderAttemptError } from "./errors.js";
+import { DexError, ProviderAttemptError, RouteExecutionFailure } from "./errors.js";
 import type {
   ProviderAttempt,
   RoutePolicy,
@@ -15,24 +15,50 @@ import { validateChoiceResponse } from "./validation.js";
 /* Circuit breaker                                                     */
 /* ------------------------------------------------------------------ */
 
-type CircuitState = "closed" | "open" | "half-open";
+// P0-5: explicit "probing" state ensures single-flight half-open probes.
+// State machine:
+//
+//   closed ──failures >= threshold──> open
+//   open   ──cooldown elapsed & first allowProbe()──> probing
+//   probing ──recordSuccess──> closed
+//   probing ──recordFailure──> open
+//   probing ──probeTimeoutMs elapsed──> open (probe hung)
+//
+// allowProbe() is the *only* method that performs the open→probing
+// transition and it does so atomically per call. isOpen() is now a pure
+// observation that does NOT mutate state — that's the bug the previous
+// half-open implementation had.
+
+type CircuitState = "closed" | "open" | "probing";
 
 interface CircuitRecord {
   state: CircuitState;
   failures: number;
   lastFailureAt: number;
+  probeStartedAt?: number;
 }
 
 interface CircuitBreaker {
+  /**
+   * Pure observation. Returns true when this caller should NOT use the
+   * provider: either the circuit is in cooldown ("open") or another caller
+   * already holds the probe slot ("probing").
+   */
   isOpen(providerId: string): boolean;
   recordFailure(providerId: string): void;
   recordSuccess(providerId: string): void;
-  /** Attempt to transition from open to half-open after cooldown. */
+  /**
+   * Atomic probe-slot acquisition. Returns true ONLY for the single caller
+   * that successfully transitions `open` → `probing` after cooldown. All
+   * concurrent callers in the same cooldown window return false.
+   */
   allowProbe(providerId: string): boolean;
 }
 
 export function createCircuitBreaker(policy: RoutePolicy): CircuitBreaker {
   const circuits = new Map<string, CircuitRecord>();
+  // Default probeTimeoutMs = half of cooldownMs. Tunable via RoutePolicy.
+  const probeTimeoutMs = policy.probeTimeoutMs ?? Math.max(1, Math.floor(policy.circuitCooldownMs / 2));
 
   function get(id: string): CircuitRecord {
     let c = circuits.get(id);
@@ -43,23 +69,41 @@ export function createCircuitBreaker(policy: RoutePolicy): CircuitBreaker {
     return c;
   }
 
+  function isProbeHung(c: CircuitRecord): boolean {
+    return (
+      c.state === "probing" &&
+      c.probeStartedAt !== undefined &&
+      Date.now() - c.probeStartedAt >= probeTimeoutMs
+    );
+  }
+
   return {
     isOpen(id) {
       const c = get(id);
-      if (c.state === "open") {
-        // Check if cooldown has elapsed -> half-open
-        if (Date.now() - c.lastFailureAt >= policy.circuitCooldownMs) {
-          c.state = "half-open";
-        }
+      if (c.state === "closed") return false;
+      // For open / probing states, treat this caller as excluded.
+      // The provider is still cooling down OR someone else is currently
+      // probing it.
+      if (isProbeHung(c)) {
+        // Probe has been hung too long — treat the circuit as back in
+        // cooldown so the next allowProbe() can win a fresh slot.
+        c.state = "open";
+        c.lastFailureAt = Date.now();
+        c.probeStartedAt = undefined;
+        return true;
       }
-      return c.state === "open";
+      return true;
     },
 
     recordFailure(id) {
       const c = get(id);
       c.failures += 1;
       c.lastFailureAt = Date.now();
-      if (c.failures >= policy.circuitFailureThreshold) {
+      if (c.state === "probing") {
+        // The active probe failed — restart cooldown.
+        c.state = "open";
+        c.probeStartedAt = undefined;
+      } else if (c.state === "closed" && c.failures >= policy.circuitFailureThreshold) {
         c.state = "open";
       }
     },
@@ -68,11 +112,17 @@ export function createCircuitBreaker(policy: RoutePolicy): CircuitBreaker {
       const c = get(id);
       c.failures = 0;
       c.state = "closed";
+      c.probeStartedAt = undefined;
     },
 
     allowProbe(id) {
       const c = get(id);
-      return c.state !== "open" || Date.now() - c.lastFailureAt >= policy.circuitCooldownMs;
+      if (c.state !== "open") return false;
+      if (Date.now() - c.lastFailureAt < policy.circuitCooldownMs) return false;
+      // Atomically win the probe slot.
+      c.state = "probing";
+      c.probeStartedAt = Date.now();
+      return true;
     },
   };
 }
@@ -128,6 +178,8 @@ export interface RouterDeps {
   readonly routing: RoutingConfig;
   readonly circuit: CircuitBreaker;
   readonly health: ProviderHealthCache;
+  /** P1-4: passive observation store, updated after each execute attempt. */
+  readonly observations?: import("./observations.js").ObservationStore;
 }
 
 export interface RouteExecutionResult {
@@ -136,6 +188,8 @@ export interface RouteExecutionResult {
   readonly eligibleProviderIds: readonly string[];
   readonly selectedProviderId: string;
   readonly usage?: ChoiceResponse["usage"];
+  /** P1-1: per-candidate scoring + observation snapshot. */
+  readonly routing?: import("./types.js").RoutingTrace;
 }
 
 /**
@@ -159,25 +213,46 @@ export async function executeRoute(
   deps: RouterDeps,
 ): Promise<RouteExecutionResult> {
   const policy = resolvePolicy(deps.routing, options.routeName);
-  const deadline = options.deadlineMs ?? 30000;
+  const requestedDeadline = options.deadlineMs ?? 30000;
+  // P0-4: deadline is now a shared budget for the entire decision call, not
+  // each provider attempt. Each attempt gets the *remaining* time slice.
+  const deadlineAt =
+    Number.isFinite(requestedDeadline) && requestedDeadline > 0
+      ? Date.now() + requestedDeadline
+      : Number.POSITIVE_INFINITY;
+  const remainingMs = (): number => Math.max(0, deadlineAt - Date.now());
   const retryableStatuses = new Set(policy.retryableStatusCodes ?? [429, 500, 502, 503, 504]);
 
   // Filter eligible providers
-  const eligible = await filterEligible(policy, deps, options.decisionId);
+  const eligible = await filterEligible(policy, deps, options.decisionId, remainingMs);
   if (eligible.length === 0) {
-    throw new DexError(
+    throw new RouteExecutionFailure(
       "NO_ELIGIBLE_PROVIDER",
       `No eligible provider for route "${options.routeName ?? "default"}"`,
       {
         decisionId: options.decisionId,
+        reason: "no_eligible_provider",
+        attempts: [],
         recoveryHint: "Check provider credentials, circuit state, and route policy.",
       },
     );
   }
 
-  // Order providers: apply preferredOrder if present, then policy.providerIds order,
-  // then health/latency/cost penalties.
-  const ordered = orderProviders(eligible, policy, options.preferredOrder);
+  // P1-1: score-based ordering with cost / latency / error penalties.
+  // The decision trace is attached to the result for audit / observability.
+  const { ordered, decisions } = orderProviders(
+    eligible,
+    policy,
+    options.preferredOrder,
+    deps.observations,
+  );
+  const selectedProviderId = ordered[0]?.manifest.id ?? "";
+  const routingTrace: import("./types.js").RoutingTrace = {
+    policy: options.routeName ?? "default",
+    candidates: eligible.map((p) => p.manifest.id),
+    decisions,
+    selectedProviderId,
+  };
 
   const attempts: ProviderAttempt[] = [];
   let lastError: Error | undefined;
@@ -188,14 +263,15 @@ export async function executeRoute(
     const startMs = Date.now();
 
     try {
+      const remaining = remainingMs();
       const response = await executeWithTimeout(
         provider.execute(request, {
           decisionId: options.decisionId,
           requestHash: options.requestHash,
-          deadlineMs: deadline,
+          deadlineMs: remaining,
           attempt: attempt + 1,
         }),
-        deadline,
+        remaining,
         options.decisionId,
         provider.manifest.id,
       );
@@ -211,6 +287,7 @@ export async function executeRoute(
       );
 
       deps.circuit.recordSuccess(provider.manifest.id);
+      deps.observations?.record(provider.manifest.id, { ok: true, latencyMs: elapsedMs, at: Date.now() });
       attempts.push({
         providerId: provider.manifest.id,
         startedAt,
@@ -224,6 +301,7 @@ export async function executeRoute(
         eligibleProviderIds: eligible.map((p) => p.manifest.id),
         selectedProviderId: provider.manifest.id,
         usage: validated.usage,
+        routing: { ...routingTrace, selectedProviderId: provider.manifest.id },
       };
     } catch (err) {
       const elapsedMs = Date.now() - startMs;
@@ -242,6 +320,9 @@ export async function executeRoute(
         failureCode: dexErr.code,
       });
 
+      // P1-4: record observation (failures count toward errorRate).
+      deps.observations?.record(provider.manifest.id, { ok: false, latencyMs: elapsedMs, at: Date.now() });
+
       // Update circuit breaker
       if (dexErr.code === "PROVIDER_TIMEOUT" || dexErr.code === "PROVIDER_RATE_LIMIT" || dexErr.code === "PROVIDER_FAILURE") {
         deps.circuit.recordFailure(provider.manifest.id);
@@ -249,7 +330,18 @@ export async function executeRoute(
 
       // Non-retryable errors fail immediately
       if (!isRetryable(dexErr.code)) {
-        throw dexErr;
+        throw new RouteExecutionFailure(
+          dexErr.code,
+          dexErr.message,
+          {
+            decisionId: options.decisionId,
+            reason: "non_retryable",
+            attempts,
+            providerId: provider.manifest.id,
+            recoveryHint: dexErr.recoveryHint,
+            cause: dexErr.cause,
+          },
+        );
       }
 
       lastError = dexErr;
@@ -258,13 +350,16 @@ export async function executeRoute(
 
   // All attempts exhausted
   const lastCode = lastError instanceof DexError ? lastError.code : "PROVIDER_FAILURE";
-  throw new DexError(
+  throw new RouteExecutionFailure(
     lastCode,
     `All ${attempts.length} provider attempts failed for route "${options.routeName ?? "default"}"`,
     {
       decisionId: options.decisionId,
-      cause: lastError,
+      reason: "all_attempts_failed",
+      attempts,
+      providerId: lastError instanceof DexError ? lastError.providerId : undefined,
       recoveryHint: "Check provider health, credentials, and retry policy.",
+      cause: lastError,
     },
   );
 }
@@ -273,10 +368,16 @@ function resolvePolicy(routing: RoutingConfig, routeName?: string): RoutePolicy 
   if (routeName) {
     const named = routing.named?.[routeName];
     if (!named) {
-      throw new DexError("UNKNOWN_ROUTE", `Unknown route "${routeName}"`, {
-        decisionId: "router",
-        recoveryHint: "Declare the route in DexConfig.routing.named.",
-      });
+      throw new RouteExecutionFailure(
+        "UNKNOWN_ROUTE",
+        `Unknown route "${routeName}"`,
+        {
+          decisionId: "router",
+          reason: "unknown_route",
+          attempts: [],
+          recoveryHint: "Declare the route in DexConfig.routing.named.",
+        },
+      );
     }
     return named;
   }
@@ -287,6 +388,7 @@ async function filterEligible(
   policy: RoutePolicy,
   deps: RouterDeps,
   _decisionId: string,
+  remainingMs: () => number,
 ): Promise<ChoiceProvider[]> {
   const eligible: ChoiceProvider[] = [];
   for (const provider of deps.providers) {
@@ -303,8 +405,11 @@ async function filterEligible(
     if (deps.circuit.isOpen(provider.manifest.id) && !deps.circuit.allowProbe(provider.manifest.id)) {
       continue;
     }
-    // Health check
-    const health = await deps.health.getHealth(provider, 5000);
+    // Health check — bound by the smaller of the remaining deadline budget and
+    // a 5000ms ceiling so a single provider cannot eat the whole budget on
+    // health probing (P0-4).
+    const healthBudget = Math.min(remainingMs(), 5000);
+    const health = await deps.health.getHealth(provider, healthBudget);
     if (!health.available) {
       continue;
     }
@@ -313,24 +418,121 @@ async function filterEligible(
   return eligible;
 }
 
+/**
+ * P1-1: score every candidate against the policy and return both the
+ * ordered list and a per-candidate decision trace for audit.
+ *
+ * Score (lower = better) is the sum of:
+ *  - static priority index (position in providerIds / preferredOrder)
+ *  - latency penalty: max(0, p95Ms - latencyPenaltyFloorMs) * latencyWeight
+ *  - error penalty:   max(0, errorRate - errorPenaltyFloorRate) * errorWeight
+ *  - cost penalty:    `provider.estimate?.costUsd ?? 0` * costWeight
+ *                     (and HARD-eliminate providers above `maxEstimatedCostUsd`)
+ *
+ * Observations come from `RouterDeps.observations` (P1-4 sliding window).
+ * If absent (e.g. in tests), the scoring falls back to zero penalties.
+ */
 function orderProviders(
-  providers: ChoiceProvider[],
+  providers: readonly ChoiceProvider[],
   policy: RoutePolicy,
-  preferredOrder?: readonly string[],
-): ChoiceProvider[] {
-  // Build a score: lower is better.
-  // Start with static preference index (position in providerIds or preferredOrder).
-  const order = preferredOrder && preferredOrder.length > 0 ? preferredOrder : policy.providerIds;
+  preferredOrder: readonly string[] | undefined,
+  observations: import("./observations.js").ObservationStore | undefined,
+): { ordered: ChoiceProvider[]; decisions: import("./types.js").RouteDecision[] } {
+  const order =
+    preferredOrder && preferredOrder.length > 0 ? preferredOrder : policy.providerIds;
+  const scoring = policy.scoring ?? {};
+  const latencyWeight = scoring.latencyWeight ?? 1.0;
+  const errorWeight = scoring.errorWeight ?? 2.0;
+  const costWeight = scoring.costWeight ?? 1.5;
+  const latencyFloor = scoring.latencyPenaltyFloorMs ?? policy.p95LatencyMs ?? 0;
+  const errorFloor = scoring.errorPenaltyFloorRate ?? 0.1;
+  const costCeiling = policy.maxEstimatedCostUsd ?? Number.POSITIVE_INFINITY;
 
-  return [...providers].sort((a, b) => {
-    const aIdx = order.indexOf(a.manifest.id);
-    const bIdx = order.indexOf(b.manifest.id);
-    // Prefer explicitly listed providers
-    const aPref = aIdx === -1 ? Number.MAX_SAFE_INTEGER : aIdx;
-    const bPref = bIdx === -1 ? Number.MAX_SAFE_INTEGER : bIdx;
-    if (aPref !== bPref) return aPref - bPref;
-    return 0;
-  });
+  type Scored = {
+    provider: ChoiceProvider;
+    score: number;
+    decision: import("./types.js").RouteDecision;
+  };
+
+  const scored: Scored[] = [];
+
+  for (const provider of providers) {
+    const reasons: import("./types.js").RouteDecisionReason[] = [];
+
+    // 1) Static priority
+    const idx = order.indexOf(provider.manifest.id);
+    const priorityDelta = idx === -1 ? Number.MAX_SAFE_INTEGER / 2 : idx * 10; // space out so other factors can win
+    reasons.push({
+      factor: "priority",
+      delta: priorityDelta,
+      note: idx === -1 ? "not in policy order — penalized" : `position ${idx} in route order`,
+    });
+
+    // 2) Observation-driven penalties
+    const snapshot = observations?.snapshot(provider.manifest.id) ?? { sampleCount: 0 };
+    let latencyDelta = 0;
+    let errorDelta = 0;
+    if (snapshot.p95Ms !== undefined && snapshot.p95Ms > latencyFloor) {
+      latencyDelta = (snapshot.p95Ms - latencyFloor) * latencyWeight;
+      reasons.push({
+        factor: "latency",
+        delta: latencyDelta,
+        note: `p95 ${snapshot.p95Ms}ms > floor ${latencyFloor}ms × ${latencyWeight}`,
+      });
+    }
+    if (snapshot.errorRate !== undefined && snapshot.errorRate > errorFloor) {
+      errorDelta = (snapshot.errorRate - errorFloor) * errorWeight;
+      reasons.push({
+        factor: "error",
+        delta: errorDelta,
+        note: `errorRate ${(snapshot.errorRate * 100).toFixed(1)}% > floor ${(errorFloor * 100).toFixed(1)}% × ${errorWeight}`,
+      });
+    }
+
+    // 3) Cost penalty — also acts as a hard ceiling.
+    const cost = provider.estimate?.costUsd ?? 0;
+    let costDelta = 0;
+    let eligible = true;
+    if (cost > costCeiling) {
+      eligible = false;
+      reasons.push({
+        factor: "cost",
+        delta: Number.MAX_SAFE_INTEGER,
+        note: `cost ${cost} > budget ${costCeiling} — ineligible`,
+      });
+    } else if (cost > 0) {
+      costDelta = cost * costWeight;
+      reasons.push({
+        factor: "cost",
+        delta: costDelta,
+        note: `cost ${cost} × ${costWeight}`,
+      });
+    }
+
+    const score = priorityDelta + latencyDelta + errorDelta + costDelta;
+    scored.push({
+      provider,
+      score: eligible ? score : Number.POSITIVE_INFINITY,
+      decision: {
+        providerId: provider.manifest.id,
+        score: eligible ? score : Number.POSITIVE_INFINITY,
+        eligible,
+        reasons,
+        observation: {
+          sampleCount: snapshot.sampleCount,
+          p95Ms: snapshot.p95Ms,
+          errorRate: snapshot.errorRate,
+          avgLatencyMs: snapshot.avgLatencyMs,
+        },
+      },
+    });
+  }
+
+  scored.sort((a, b) => a.score - b.score);
+  return {
+    ordered: scored.map((s) => s.provider),
+    decisions: scored.map((s) => s.decision),
+  };
 }
 
 async function executeWithTimeout<T>(

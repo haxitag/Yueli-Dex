@@ -48,6 +48,7 @@ const templates: readonly TemplateDefinition[] = [
         message: "$.message",
         accountPlan: "$.account.plan",
         region: "$.account.region",
+        goal: "$.goal",
       },
     },
     choices: [
@@ -86,6 +87,19 @@ const templates: readonly TemplateDefinition[] = [
         normal: { kind: "priority.set", level: "normal" },
         needs_review: { kind: "review.request" },
       },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "enterprise-charged-twice",
+          input: {
+            message: "I was charged twice on my enterprise account",
+            account: { plan: "enterprise" },
+            goal: "resolve billing issue",
+          },
+          expected: { priority: "urgent" },
+        },
+      ],
     },
   },
 
@@ -844,6 +858,38 @@ const templates: readonly TemplateDefinition[] = [
         needs_review: { kind: "realtime.risk", level: "imminent" },
       },
     },
+    examples: {
+      fixtures: [
+        {
+          name: "airborne-with-hazard",
+          input: {
+            tickHz: 9,
+            actionSpace: ["noop", "advance", "defend"],
+            state: {
+              player: { grounded: false },
+              hazards: [{ kind: "goomba" }],
+              goal: "reach flagpole",
+            },
+          },
+          expected: { action: "defend" },
+        },
+        {
+          name: "grounded-with-hazard",
+          input: {
+            tickHz: 9,
+            actionSpace: ["noop", "advance", "defend"],
+            state: {
+              player: { grounded: true },
+              hazards: [{ kind: "goomba" }],
+              goal: "reach flagpole",
+            },
+          },
+          // No local rule fires — falls through to provider. Fixture documents
+          // the expected behavior: NOT short-circuited, so `action` is
+          // not predicted here.
+        },
+      ],
+    },
   },
 
   /* ---------------------------------------------------------------- */
@@ -1040,6 +1086,25 @@ const templates: readonly TemplateDefinition[] = [
         ship: { kind: "idea.verdict", verdict: "ship" },
         needs_review: { kind: "idea.verdict", verdict: "needs_review" },
       },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "short-idea",
+          input: { idea: "AI todo", goal: "money" },
+          expected: { verdict: "needs_review" },
+        },
+        {
+          name: "long-idea",
+          input: {
+            idea:
+              "An offline-first TypeScript ORM that syncs via CRDTs and runs in the browser for collaborative apps",
+            goal: "money",
+          },
+          // Long enough not to short-circuit. Fixture documents behavior:
+          // no local rule fires, falls through to provider.
+        },
+      ],
     },
   },
 ];

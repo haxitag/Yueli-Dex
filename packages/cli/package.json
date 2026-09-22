@@ -16,7 +16,8 @@
   "dependencies": {
     "@haxitag/yueli-dex": "^0.1.0",
     "@haxitag/yueli-dex-plugin-sdk": "^0.1.0",
-    "@haxitag/yueli-dex-provider-http": "^0.1.0"
+    "@haxitag/yueli-dex-provider-http": "^0.1.0",
+    "@haxitag/yueli-dex-templates-core": "^0.1.0"
   },
   "license": "MIT",
   "publishConfig": {

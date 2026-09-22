@@ -166,7 +166,12 @@ function describeWhen(when: unknown, locale: "zh" | "en"): string {
   const w = when as Record<string, unknown>;
   if (typeof w.path === "string") {
     const op = typeof w.op === "string" ? w.op : "?";
-    return `${w.path.replace("$.", "")} ${op} ${JSON.stringify(w.value ?? "")}`;
+    // P2: strip the "input." prefix — at evaluation time the rule input IS
+    // the compiled request state, so `$.input.accountPlan` reads from
+    // state.accountPlan. Showing "input.accountPlan" confused users whose
+    // state has no "input" key.
+    const displayPath = w.path.replace(/^\$\.input\./, "").replace(/^\$\./, "");
+    return `${displayPath} ${op} ${JSON.stringify(w.value ?? "")}`;
   }
   if (Array.isArray(w.any)) {
     const any = locale === "en" ? "any of: " : "任一命中: ";
@@ -685,7 +690,7 @@ export function TieredDecision() {
             {compiledRequest && tier !== "L2" ? (
               <div>
                 <p className="text-xs font-medium text-dex-muted mb-1">{t("td.chainResult.choiceRequest")}</p>
-                <pre className="code-block text-dex-text whitespace-pre-wrap break-all max-h-[160px] overflow-auto text-xs">
+                <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[160px] overflow-auto text-xs">
                   {JSON.stringify(compiledRequest, null, 2)}
                 </pre>
               </div>
@@ -763,7 +768,7 @@ export function TieredDecision() {
           {ruleResult?.shortCircuit?.response ? (
             <section className="rounded-xl border border-emerald-500/30 bg-dex-surface p-4">
               <h2 className="text-sm font-semibold text-dex-text mb-2">{t("td.chainResult.l1Response")}</h2>
-              <pre className="code-block text-emerald-200 whitespace-pre-wrap break-all max-h-[180px] overflow-auto text-xs">
+              <pre className="code-block text-emerald-200 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[180px] overflow-auto text-xs">
                 {JSON.stringify(ruleResult.shortCircuit.response, null, 2)}
               </pre>
             </section>
@@ -772,7 +777,7 @@ export function TieredDecision() {
           {selected && tier === "L2" ? (
             <section className="rounded-xl border border-dex-border bg-dex-surface p-4">
               <h2 className="text-sm font-semibold text-dex-text mb-2">{t("td.sdkExample")}</h2>
-              <pre className="code-block text-dex-text whitespace-pre-wrap break-all max-h-[300px] overflow-auto text-xs">
+              <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[300px] overflow-auto text-xs">
                 {selected.example}
               </pre>
             </section>

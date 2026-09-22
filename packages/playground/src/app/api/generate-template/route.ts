@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readJsonBody } from "@/lib/http";
 
 /**
  * POST /api/generate-template  —  第三层（L3）：LLM 生成场景效用模板
@@ -176,7 +177,9 @@ function generateScaffold(body: GenerateBody): Record<string, unknown> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json()) as GenerateBody;
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = (parsed.body ?? {}) as GenerateBody;
   if (!body.scenario && !body.useCase) {
     return NextResponse.json(
       { error: "scenario or useCase description required for L3 template generation" },

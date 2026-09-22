@@ -272,8 +272,12 @@ export const LOCAL_RULE_SETS: Readonly<Record<string, readonly RuleSet[]>> = {
   ],
 
   // state: { tickHz, grounded, hazards, goal }
-  // If the player is airborne and there is a hazard, defend is the only safe
-  // reflexive answer that any second-line logic can rely on.
+  // If the player is airborne and there is at least one hazard, defend is the
+  // only safe reflexive answer that any second-line logic can rely on.
+  //
+  // Important: this rule must check BOTH conditions. A bare `grounded=false`
+  // test (the original bug) would fire even when `hazards` is absent/empty,
+  // turning a deterministic rule into a wrong-by-construction decision.
   "realtime-action": [
     ruleSet("realtime-action-local-rules", {
       apiVersion: "yueli-dex-rules/v1",
@@ -283,6 +287,7 @@ export const LOCAL_RULE_SETS: Readonly<Record<string, readonly RuleSet[]>> = {
           when: {
             all: [
               { path: "$.input.grounded", op: "equals", value: false },
+              { path: "$.input.hazards", op: "exists" },
             ],
           },
           then: {
@@ -290,7 +295,7 @@ export const LOCAL_RULE_SETS: Readonly<Record<string, readonly RuleSet[]>> = {
             questionId: "action",
             choice: "defend",
             message:
-              "Airborne state — defensive reflex chosen locally, Jev only sets the risk level",
+              "Airborne state with hazards — defensive reflex chosen locally, Jev only sets the risk level",
           },
         },
       ],
@@ -353,13 +358,17 @@ export const LOCAL_RULE_SETS: Readonly<Record<string, readonly RuleSet[]>> = {
 
   // state: { idea, goal, context }
   // killmyidea's clarity floor: ideas shorter than ~50 chars can't be scored.
+  // NOTE: the original implementation used `op: "exists"` which short-circuited
+  // EVERY idea to `needs_review` regardless of length — a deterministic rule
+  // producing a wrong-by-construction decision. We use `string_length_lt` (an
+  // operator added in P0-2) to enforce the actual length floor.
   "startup-pitch": [
     ruleSet("startup-pitch-local-rules", {
       apiVersion: "yueli-dex-rules/v1",
       rules: [
         {
           id: "too-short-to-score",
-          when: { path: "$.input.idea", op: "exists" },
+          when: { path: "$.input.idea", op: "string_length_lt", value: 50 },
           then: {
             kind: "shortCircuit",
             questionId: "verdict",

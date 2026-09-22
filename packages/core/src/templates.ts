@@ -8,6 +8,7 @@ import { validateChoiceRequest } from "./validation.js";
 import type {
   CompiledChoice,
   CompiledTemplate,
+  TemplateFixture,
   TemplateModelingConfig,
   TemplatePack,
   TemplateRegistry,
@@ -201,6 +202,9 @@ function parseTemplate(raw: JsonValue, packId: string, packVersion: string): Com
   }
   const modeling: TemplateModelingConfig = { mode, allow, requireEvidenceRefs };
 
+  // P2-1: optional examples.fixtures attached to the template.
+  const fixtures = parseExamples(t, id);
+
   return {
     id,
     version: typeof version === "string" ? version : packVersion,
@@ -210,7 +214,65 @@ function parseTemplate(raw: JsonValue, packId: string, packVersion: string): Com
     constraints,
     actions,
     modeling,
+    ...(fixtures && fixtures.length > 0 ? { fixtures } : {}),
   };
+}
+
+/**
+ * Parse the optional `examples.fixtures` array. Each fixture is a named
+ * input/expected pair. We validate names and basic shape; expected values
+ * are kept loose (any JSON object) so fixtures can assert partial state.
+ */
+function parseExamples(t: Record<string, unknown>, templateId: string): TemplateFixture[] | undefined {
+  const examples = t.examples;
+  if (examples === undefined) return undefined;
+  if (!isPlainObject(examples)) {
+    throw new DexError(
+      "TEMPLATE_INVALID",
+      `Template "${templateId}" examples must be an object`,
+      { decisionId: "template-engine" },
+    );
+  }
+  const rawFixtures = (examples as Record<string, unknown>).fixtures;
+  if (rawFixtures === undefined) return undefined;
+  if (!Array.isArray(rawFixtures)) {
+    throw new DexError(
+      "TEMPLATE_INVALID",
+      `Template "${templateId}" examples.fixtures must be an array`,
+      { decisionId: "template-engine" },
+    );
+  }
+  return rawFixtures.map((f, i) => {
+    if (!isPlainObject(f)) {
+      throw new DexError(
+        "TEMPLATE_INVALID",
+        `Template "${templateId}" fixture #${i} must be an object`,
+        { decisionId: "template-engine" },
+      );
+    }
+    const name = (f as Record<string, unknown>).name;
+    if (typeof name !== "string" || name.length === 0) {
+      throw new DexError(
+        "TEMPLATE_INVALID",
+        `Template "${templateId}" fixture #${i} must have a non-empty name`,
+        { decisionId: "template-engine" },
+      );
+    }
+    const input = (f as Record<string, unknown>).input;
+    if (input === undefined) {
+      throw new DexError(
+        "TEMPLATE_INVALID",
+        `Template "${templateId}" fixture "${name}" must have an input field`,
+        { decisionId: "template-engine" },
+      );
+    }
+    const expected = (f as Record<string, unknown>).expected;
+    return {
+      name,
+      input: input as JsonValue,
+      ...(isPlainObject(expected) ? { expected: expected as Readonly<Record<string, unknown>> } : {}),
+    };
+  });
 }
 
 function parseChoice(raw: unknown, templateId: string): CompiledChoice {
@@ -362,7 +424,7 @@ export function createTemplateRegistry(
       return validateChoiceRequest(request, decisionId);
     },
 
-    toActionIntent({ template, request: _request, response }) {
+    toActionIntent({ template, request: _request, response, decisionId, model, ruleRefs }) {
       const compiled = resolveTemplate(template);
       const intents: ActionIntent[] = [];
 
@@ -392,6 +454,12 @@ export function createTemplateRegistry(
           choice: answer.choice,
           kind,
           params: Object.keys(params).length > 0 ? params : undefined,
+          // P1-5: evidence fields — only emitted when supplied.
+          ...(decisionId ? { decisionId } : {}),
+          ...(model ? { model } : {}),
+          ...(answer.confidence !== undefined ? { confidence: answer.confidence } : {}),
+          ...(answer.probabilities ? { probabilities: answer.probabilities } : {}),
+          ...(ruleRefs && ruleRefs.length > 0 ? { ruleRefs } : {}),
         });
       }
 
@@ -400,6 +468,11 @@ export function createTemplateRegistry(
 
     getCompiled(ref: string): CompiledTemplate | undefined {
       return templates.get(ref);
+    },
+
+    /** P2-1: expose fixtures for CLI / playground regression runs. */
+    getFixtures(ref: string): readonly TemplateFixture[] | undefined {
+      return templates.get(ref)?.fixtures;
     },
   };
 }

@@ -109,7 +109,7 @@ export function RuleTester() {
           {loading ? (
             <p className="text-sm text-dex-muted">Evaluating rules…</p>
           ) : result ? (
-            <pre className="code-block text-dex-text whitespace-pre-wrap break-all max-h-[600px] overflow-auto">
+            <pre className="code-block text-dex-text whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[600px] overflow-auto">
               {JSON.stringify(result, null, 2)}
             </pre>
           ) : (

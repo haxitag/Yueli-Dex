@@ -69,6 +69,60 @@ export class ProviderAttemptError extends DexError {
   }
 }
 
+/**
+ * Why the route exited without a successful response. P0-3 exposes this on
+ * the receipt so failures carry the same audit trail as successes.
+ */
+export type RouteFailureReason =
+  | "no_eligible_provider"
+  | "all_attempts_failed"
+  | "non_retryable"
+  | "unknown_route"
+  | "invalid_request"
+  | "rule_rejected"
+  | "modeling_rejected"
+  | "template_invalid";
+
+/**
+ * Carries the per-attempt trace that the routing layer collected before the
+ * route gave up. Thrown by `executeRoute()` instead of a bare `DexError` so
+ * the top-level `dex.choice()` can preserve the attempts on the receipt —
+ * failures are the *most* important audit signal and must not be silently
+ * trimmed (P0-3, plan §6.3).
+ */
+export class RouteExecutionFailure extends DexError {
+  readonly attempts: readonly import("./types.js").ProviderAttempt[];
+  readonly reason: RouteFailureReason;
+
+  constructor(
+    code: DexErrorCode,
+    message: string,
+    opts: {
+      decisionId: string;
+      reason: RouteFailureReason;
+      attempts: readonly import("./types.js").ProviderAttempt[];
+      providerId?: string;
+      recoveryHint?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(code, message, {
+      decisionId: opts.decisionId,
+      providerId: opts.providerId,
+      recoveryHint: opts.recoveryHint,
+      cause: opts.cause,
+    });
+    this.attempts = opts.attempts;
+    this.reason = opts.reason;
+  }
+}
+
 export function isDexError(value: unknown): value is DexError {
   return value instanceof DexError;
+}
+
+export function isRouteExecutionFailure(
+  value: unknown,
+): value is RouteExecutionFailure {
+  return value instanceof RouteExecutionFailure;
 }

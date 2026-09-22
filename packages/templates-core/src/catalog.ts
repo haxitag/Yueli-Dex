@@ -21,6 +21,10 @@ export const CATALOG: readonly TemplateCatalogEntry[] = TEMPLATES.map((t) => ({
   useCase: t.meta.useCase,
   utility: t.meta.utility,
   references: t.meta.references,
+  // P2-1: surface fixture count so the CLI / playground can show coverage.
+  ...(t.examples?.fixtures
+    ? { fixtureCount: t.examples.fixtures.length }
+    : {}),
 }));
 
 /**

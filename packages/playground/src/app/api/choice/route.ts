@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildDexFromConfig } from "@/lib/dex-factory";
 import { resolveCredentials, maskKey } from "@/lib/env";
+import { readJsonBody } from "@/lib/http";
 import { isDexError } from "@haxitag/yueli-dex";
 import type { ChoiceRequest, ChoiceCallOptions } from "@haxitag/yueli-dex";
 import type { PlaygroundDexConfig } from "@/lib/types";
@@ -8,12 +9,26 @@ import type { PlaygroundDexConfig } from "@/lib/types";
 export const maxDuration = 30;
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = await request.json();
-  const { config, choiceRequest, options } = body as {
-    config: PlaygroundDexConfig;
-    choiceRequest: ChoiceRequest;
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body as {
+    config?: PlaygroundDexConfig;
+    choiceRequest?: ChoiceRequest;
     options?: ChoiceCallOptions;
   };
+  const { config, choiceRequest, options } = body ?? {};
+
+  if (!config || !Array.isArray(config.providers) || !choiceRequest) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "BAD_REQUEST_BODY",
+          message: "config (with providers array) and choiceRequest are required",
+        },
+      },
+      { status: 400 },
+    );
+  }
 
   // Resolve credential metadata for each provider (masked, never raw secrets)
   const credentials = config.providers.map((p) => {

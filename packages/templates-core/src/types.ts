@@ -39,6 +39,8 @@ export type TemplateCatalogEntry = {
   readonly useCase: string;
   readonly utility: string;
   readonly references: readonly string[];
+  /** P2-1: number of evaluation fixtures attached to the template. */
+  readonly fixtureCount?: number;
 };
 
 export type TemplateFilter = {
@@ -78,5 +80,13 @@ export type TemplateDefinition = {
       readonly changeActionKinds: boolean;
     };
     readonly requireEvidenceRefs?: boolean;
+  };
+  /** P2-1: optional evaluation fixtures. */
+  readonly examples?: {
+    readonly fixtures?: ReadonlyArray<{
+      readonly name: string;
+      readonly input: JsonValue;
+      readonly expected?: Readonly<Record<string, unknown>>;
+    }>;
   };
 };

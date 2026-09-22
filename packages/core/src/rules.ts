@@ -16,7 +16,20 @@ import type { ChoiceResponse } from "@haxitag/yueli-dex-plugin-sdk";
 
 interface LeafCondition {
   readonly path: string;
-  readonly op: "exists" | "equals" | "in" | "lt" | "lte" | "gt" | "gte";
+  readonly op:
+    | "exists"
+    | "equals"
+    | "in"
+    | "lt"
+    | "lte"
+    | "gt"
+    | "gte"
+    | "string_length_lt"
+    | "string_length_gte"
+    | "array_length_lt"
+    | "array_length_gte"
+    | "contains"
+    | "matches";
   readonly value?: JsonValue;
 }
 
@@ -161,7 +174,21 @@ function parseCondition(raw: unknown, ruleId: string): RuleCondition {
       decisionId: "rule-engine",
     });
   }
-  const validOps = ["exists", "equals", "in", "lt", "lte", "gt", "gte"] as const;
+  const validOps = [
+    "exists",
+    "equals",
+    "in",
+    "lt",
+    "lte",
+    "gt",
+    "gte",
+    "string_length_lt",
+    "string_length_gte",
+    "array_length_lt",
+    "array_length_gte",
+    "contains",
+    "matches",
+  ] as const;
   if (!validOps.includes(op as (typeof validOps)[number])) {
     throw new DexError(
       "RULE_REJECTED",
@@ -316,8 +343,68 @@ function evalCondition(cond: RuleCondition, ctx: RuleContext): boolean {
       return found && typeof value === "number" && typeof leaf.value === "number" && value > leaf.value;
     case "gte":
       return found && typeof value === "number" && typeof leaf.value === "number" && value >= leaf.value;
+    case "string_length_lt":
+      return (
+        found &&
+        typeof value === "string" &&
+        typeof leaf.value === "number" &&
+        value.length < leaf.value
+      );
+    case "string_length_gte":
+      return (
+        found &&
+        typeof value === "string" &&
+        typeof leaf.value === "number" &&
+        value.length >= leaf.value
+      );
+    case "array_length_lt":
+      return (
+        found &&
+        Array.isArray(value) &&
+        typeof leaf.value === "number" &&
+        value.length < leaf.value
+      );
+    case "array_length_gte":
+      return (
+        found &&
+        Array.isArray(value) &&
+        typeof leaf.value === "number" &&
+        value.length >= leaf.value
+      );
+    case "contains":
+      return (
+        found &&
+        Array.isArray(value)
+          ? leaf.value !== undefined && value.includes(leaf.value as never)
+          : typeof value === "string" &&
+            typeof leaf.value === "string" &&
+            value.includes(leaf.value)
+      );
+    case "matches":
+      return (
+        found &&
+        typeof value === "string" &&
+        typeof leaf.value === "string" &&
+        safeRegexTest(leaf.value, value)
+      );
     default:
       return false;
+  }
+}
+
+/**
+ * Compile and run a regex against the candidate string. A malformed pattern
+ * returns `false` (matches returns false) rather than throwing — this keeps
+ * rule evaluation total and prevents one bad rule from blocking an entire
+ * decision. We still emit nothing here; the parser catches illegal `value`
+ * types at parse time. Throwing regexes (e.g. backreferences) are a known
+ * v1 limitation.
+ */
+function safeRegexTest(pattern: string, candidate: string): boolean {
+  try {
+    return new RegExp(pattern).test(candidate);
+  } catch {
+    return false;
   }
 }
 
@@ -382,6 +469,7 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
             ruleId: rule.id,
             ruleSetId: ruleSet.id,
             ruleSetVersion: ruleSet.version,
+            scope: ruleSet.scope,
             action: rule.then,
           });
         }
@@ -393,14 +481,37 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
   return {
     evaluatePreRouting(ctx, decisionId) {
       const matches = evaluateAll(ctx as RuleContext, decisionId);
+
+      // P1-3: action precedence lattice — reject > constrain > route > shortCircuit.
+      // We sort the matches accordingly before processing so that the
+      // strongest action is applied first and weaker ones never overwrite
+      // stronger ones.
+      const lattice: Record<RuleDef["then"]["kind"], number> = {
+        reject: 0,
+        constrain: 1,
+        route: 2,
+        shortCircuit: 3,
+      };
+      // Stable sort by (lattice rank, original order). Array.prototype.sort
+      // is stable in modern engines (Node ≥12).
+      matches.sort((a, b) => lattice[a.action.kind] - lattice[b.action.kind]);
+
       let shortCircuit: { response: ChoiceResponse; match: RuleMatch } | undefined;
       let forcedRoute: string | undefined;
       let requireFallbackOption: string | undefined;
       let allowedActionKinds: readonly string[] | undefined;
 
+      // Track (kind, scope, value) we've applied so same-scope conflicts
+      // can be detected. Two rules with the SAME value at the same scope
+      // are idempotent and ignored; different values raise RULE_REJECTED.
+      const routeSeenAt: Map<number, string> = new Map();
+      // (scope, questionId) -> chosen choice (for shortCircuit conflict detection)
+      const shortCircuitSeenAt: Map<string, string> = new Map();
+
       for (const match of matches) {
         switch (match.action.kind) {
           case "reject":
+            // First reject wins — anything else is discarded.
             throw new DexError(
               "RULE_REJECTED",
               match.action.message || `Rule "${match.ruleId}" rejected the request`,
@@ -410,34 +521,77 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
               },
             );
           case "constrain":
-            if (match.action.requireFallbackOption) {
-              requireFallbackOption = match.action.requireFallbackOption;
+            if (match.action.requireFallbackOption !== undefined) {
+              if (requireFallbackOption === undefined) {
+                requireFallbackOption = match.action.requireFallbackOption;
+              } else if (requireFallbackOption !== match.action.requireFallbackOption) {
+                throw new DexError(
+                  "RULE_REJECTED",
+                  `Conflicting requireFallbackOption between rules: "${requireFallbackOption}" vs "${match.action.requireFallbackOption}"`,
+                  { decisionId },
+                );
+              }
             }
-            if (match.action.allowedActionKinds) {
-              allowedActionKinds = match.action.allowedActionKinds;
+            if (match.action.allowedActionKinds !== undefined) {
+              if (allowedActionKinds === undefined) {
+                allowedActionKinds = [...match.action.allowedActionKinds];
+              } else {
+                const setA = new Set(allowedActionKinds);
+                allowedActionKinds = match.action.allowedActionKinds.filter((k) => setA.has(k));
+              }
             }
             break;
           case "route":
-            if (match.action.route) {
+            if (match.action.route !== undefined) {
+              const scopeIdx = scopeOrder[match.scope];
+              const prior = routeSeenAt.get(scopeIdx);
+              if (prior !== undefined && prior !== match.action.route) {
+                throw new DexError(
+                  "RULE_REJECTED",
+                  `Conflicting route rules at scope "${match.scope}": "${prior}" vs "${match.action.route}"`,
+                  { decisionId },
+                );
+              }
               forcedRoute = match.action.route;
+              routeSeenAt.set(scopeIdx, match.action.route);
             }
             break;
-          case "shortCircuit":
-            if (
-              match.action.questionId &&
-              match.action.choice &&
-              ctx.compiled.questions[match.action.questionId]
-            ) {
-              shortCircuit = {
-                response: buildShortCircuitResponse(
-                  ctx.compiled,
-                  match.action.questionId,
-                  match.action.choice,
-                ),
-                match,
-              };
+          case "shortCircuit": {
+            if (!match.action.questionId || !match.action.choice) break;
+            const question = ctx.compiled.questions[match.action.questionId];
+            // If the question doesn't exist OR the choice isn't valid for
+            // this template's question, the rule belongs to a different
+            // template — silently skip without participating in conflict
+            // detection.
+            if (!question) break;
+            if (!Object.prototype.hasOwnProperty.call(question.criteria, match.action.choice)) {
+              break;
             }
+            const scopeIdx = scopeOrder[match.scope];
+            const scopeKey = `${scopeIdx}|${match.action.questionId}`;
+            const priorChoice = shortCircuitSeenAt.get(scopeKey);
+            if (priorChoice !== undefined && priorChoice !== match.action.choice) {
+              throw new DexError(
+                "RULE_REJECTED",
+                `Conflicting shortCircuit rules at scope "${match.scope}" for question "${match.action.questionId}": "${priorChoice}" vs "${match.action.choice}"`,
+                { decisionId },
+              );
+            }
+            if (priorChoice === match.action.choice) {
+              // Idempotent convergence — already applied, skip.
+              break;
+            }
+            shortCircuit = {
+              response: buildShortCircuitResponse(
+                ctx.compiled,
+                match.action.questionId,
+                match.action.choice,
+              ),
+              match,
+            };
+            shortCircuitSeenAt.set(scopeKey, match.action.choice);
             break;
+          }
         }
       }
 

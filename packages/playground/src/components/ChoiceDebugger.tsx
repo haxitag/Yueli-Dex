@@ -24,19 +24,18 @@ const DEFAULT_REQUEST: ChoiceRequest = {
 };
 
 const DEFAULT_PROVIDERS: ProviderConfig[] = [
-  {
-    id: "local-jev",
-    kind: "http",
-    endpoint: "http://localhost:9876",
-    useEnv: true,
-  },
+  // P2: default to the built-in mock provider so the very first "Execute"
+  // succeeds out of the box (the previous localhost:9876 http default always
+  // failed for new users with a connection error). Switch kind to
+  // "typesafe" / "cloudflare" / "vercel" / "http" once credentials are set.
+  { id: "mock-jev", kind: "mock" },
 ];
 
 const DEFAULT_CONFIG: PlaygroundDexConfig = {
   providers: DEFAULT_PROVIDERS,
   routing: {
     default: {
-      providerIds: ["local-jev"],
+      providerIds: ["mock-jev"],
       maxAttempts: 2,
       circuitFailureThreshold: 3,
       circuitCooldownMs: 60000,

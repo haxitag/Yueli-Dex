@@ -9,6 +9,7 @@ import type {
   Modeler,
   ModelingProposal,
 } from "@haxitag/yueli-dex-plugin-sdk";
+import type { RouteFailureReason } from "./errors.js";
 
 // Re-export plugin-sdk types that internal modules import from here.
 export type {
@@ -22,6 +23,7 @@ export type {
   Modeler,
   ModelingProposal,
 };
+export type { RouteFailureReason };
 
 /* ------------------------------------------------------------------ */
 /* Public API types                                                    */
@@ -76,6 +78,59 @@ export interface RoutePolicy {
   readonly circuitFailureThreshold: number;
   readonly circuitCooldownMs: number;
   readonly retryableStatusCodes?: readonly number[];
+  /**
+   * P0-5: how long a half-open probe may hang before the circuit is treated
+   * as failed. Defaults to `circuitCooldownMs / 2`.
+   */
+  readonly probeTimeoutMs?: number;
+  /**
+   * P1-1: scoring penalties. Weights are applied additively to a per-provider
+   * score (lower is better). Defaults: latency 1.0, error 2.0, cost 1.5.
+   */
+  readonly scoring?: {
+    readonly latencyWeight?: number;
+    readonly errorWeight?: number;
+    readonly costWeight?: number;
+    /** Threshold above which p95 penalty kicks in. */
+    readonly latencyPenaltyFloorMs?: number;
+    /** Threshold above which errorRate penalty kicks in (0..1). */
+    readonly errorPenaltyFloorRate?: number;
+  };
+}
+
+/**
+ * P1-1: per-candidate routing decision. Lower score = higher preference.
+ * Surface on `DecisionReceipt.route.routing.decisions` so callers can audit
+ * why a provider was selected — the original implementation only sorted by
+ * static `providerIds` order and silently ignored cost/latency/error.
+ */
+export interface RouteDecision {
+  readonly providerId: string;
+  readonly score: number;
+  readonly eligible: boolean;
+  readonly reasons: readonly RouteDecisionReason[];
+  readonly observation: {
+    readonly sampleCount: number;
+    readonly p95Ms?: number;
+    readonly errorRate?: number;
+    readonly avgLatencyMs?: number;
+  };
+}
+
+export type RouteDecisionReason =
+  | { readonly factor: "priority"; readonly delta: number; readonly note: string }
+  | { readonly factor: "latency"; readonly delta: number; readonly note: string }
+  | { readonly factor: "error"; readonly delta: number; readonly note: string }
+  | { readonly factor: "cost"; readonly delta: number; readonly note: string }
+  | { readonly factor: "circuit"; readonly delta: number; readonly note: string }
+  | { readonly factor: "health"; readonly delta: number; readonly note: string }
+  | { readonly factor: "ineligible"; readonly delta: number; readonly note: string };
+
+export interface RoutingTrace {
+  readonly policy: string; // route name or "default"
+  readonly candidates: readonly string[];
+  readonly decisions: readonly RouteDecision[];
+  readonly selectedProviderId: string;
 }
 
 export interface RoutingConfig {
@@ -116,7 +171,18 @@ export interface TemplateRegistry {
     readonly template: string;
     readonly request: ChoiceRequest;
     readonly response: ChoiceResponse;
+    /**
+     * P1-5: optional evidence carried into each emitted ActionIntent.
+     * `decisionId`/`model`/`ruleRefs` are typically derived from the
+     * DecisionReceipt; `confidence`/`probabilities` mirror ChoiceAnswer.
+     */
+    readonly decisionId?: string;
+    readonly model?: string;
+    readonly ruleRefs?: readonly { readonly id: string; readonly version: string }[];
   }): readonly ActionIntent[];
+
+  /** P2-1: read evaluation fixtures attached to a template. */
+  getFixtures(ref: string): readonly TemplateFixture[] | undefined;
 }
 
 /* ------------------------------------------------------------------ */
@@ -155,6 +221,10 @@ export interface DecisionReceipt {
     readonly eligibleProviderIds: readonly string[];
     readonly selectedProviderId: string;
     readonly attempts: readonly ProviderAttempt[];
+    /** Why this route exited. Absent on success; populated on every failure. */
+    readonly reason?: RouteFailureReason;
+    /** P1-1: routing scoring trace. Absent on hard failures before ordering. */
+    readonly routing?: RoutingTrace;
   };
   readonly timing: { readonly startedAt: string; readonly elapsedMs: number };
   readonly usage?: ChoiceResponse["usage"];
@@ -177,6 +247,20 @@ export interface CompiledTemplate {
   readonly constraints: TemplateConstraints;
   readonly actions: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>;
   readonly modeling: TemplateModelingConfig;
+  /** P2-1: optional evaluation fixtures attached to the template. */
+  readonly fixtures?: readonly TemplateFixture[];
+}
+
+/**
+ * P2-1: a named input/expected pair for regression. Used by `cli` and the
+ * playground to verify a template's local rules and provider selection.
+ * `expected` is intentionally untyped — fixtures may assert partial state
+ * (e.g. just `priority`) or full answers.
+ */
+export interface TemplateFixture {
+  readonly name: string;
+  readonly input: JsonValue;
+  readonly expected?: Readonly<Record<string, unknown>>;
 }
 
 export interface CompiledChoice {
@@ -211,6 +295,8 @@ export interface RuleMatch {
   readonly ruleId: string;
   readonly ruleSetId: string;
   readonly ruleSetVersion: string;
+  /** P1-3: the scope of the rule set that produced this match. */
+  readonly scope: RuleScope;
   readonly action: {
     readonly kind: RuleActionKind;
     readonly message?: string;

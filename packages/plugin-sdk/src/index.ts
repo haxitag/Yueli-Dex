@@ -80,6 +80,11 @@ export interface ProviderCallContext {
 
 export interface ChoiceProvider {
   readonly manifest: ProviderManifest;
+  /**
+   * P1-1: optional cost estimate per request. Used by routing scoring.
+   * When absent, the router treats the provider as zero-cost.
+   */
+  readonly estimate?: { readonly costUsd?: number };
   health(context: ProviderHealthContext): Promise<ProviderHealth>;
   execute(
     request: ChoiceRequest,
@@ -152,4 +157,15 @@ export interface ActionIntent {
   readonly choice: string;
   readonly kind: string;
   readonly params?: JsonValue;
+  /** P1-5: evidence fields. All optional — older callers are unaffected. */
+  /** Unique decision ID from DecisionReceipt.decisionId. */
+  readonly decisionId?: string;
+  /** Confidence score from the underlying ChoiceAnswer. */
+  readonly confidence?: number;
+  /** Per-choice probabilities from ChoiceAnswer.probabilities. */
+  readonly probabilities?: Readonly<Record<string, number>>;
+  /** Rule sets that fired during this decision (shortCircuit or constrain). */
+  readonly ruleRefs?: readonly { readonly id: string; readonly version: string }[];
+  /** Decision source identifier — local rule model id, or provider model id. */
+  readonly model?: string;
 }

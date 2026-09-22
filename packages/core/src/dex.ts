@@ -2,16 +2,18 @@ import type {
   ChoiceRequest,
 } from "@haxitag/yueli-dex-plugin-sdk";
 import { DexEventEmitter } from "./events.js";
-import { DexError, isDexError } from "./errors.js";
+import { DexError, isDexError, isRouteExecutionFailure } from "./errors.js";
 import { createModelingRegistry } from "./modeling.js";
 import { createRuleEngine } from "./rules.js";
 import { createCircuitBreaker, createHealthCache, executeRoute } from "./routing.js";
+import { createObservationStore } from "./observations.js";
 import { createTemplateRegistry } from "./templates.js";
 import type {
   DecisionReceipt,
   Dex,
   DexConfig,
   ProviderAttempt,
+  RouteFailureReason,
 } from "./types.js";
 import { generateDecisionId, hashRequest } from "./utils.js";
 import { validateChoiceRequest } from "./validation.js";
@@ -73,6 +75,8 @@ export function createDex(config: DexConfig): Dex {
   const emitter = new DexEventEmitter();
   const circuit = createCircuitBreaker(config.routing.default);
   const health = createHealthCache();
+  // P1-4: passive observation store used by routing scoring (P1-1).
+  const observations = createObservationStore(64);
 
   const modeling = createModelingRegistry({
     modelers: config.modelers ?? [],
@@ -98,17 +102,60 @@ export function createDex(config: DexConfig): Dex {
         throw err;
       }
 
-      const requestHash = hashRequest(request);
+      const requestHash = (() => {
+        try {
+          return hashRequest(request);
+        } catch (err) {
+          // P0: deeply-nested or non-JSON input must fail as a controlled
+          // DexError (with a failure receipt + event), not as a raw
+          // RangeError/TypeError that escapes without a decisionId trail.
+          const wrapped = new DexError(
+            "INVALID_CHOICE_REQUEST",
+            (err as Error).message,
+            { decisionId, recoveryHint: "Reduce the nesting depth of state/questions (max 512 levels)." },
+          );
+          const receipt = buildFailureReceipt(
+            decisionId,
+            "",
+            startedAt,
+            Date.now() - startMs,
+            wrapped,
+          );
+          emitter.emit("choice.failed", { request, receipt, error: wrapped });
+          throw wrapped;
+        }
+      })();
 
-      // Run pre-routing rules
-      const ruleResult = ruleEngine.evaluatePreRouting(
-        {
-          input: request.state,
-          compiled: request,
-          route: { eligibleProviderIds: [] },
-        },
-        decisionId,
-      );
+      // Run pre-routing rules. A `reject` action throws here; we must catch it
+      // (P0-3 audit consistency) so the choice.failed event still fires with a
+      // reason-tagged receipt.
+      let ruleResult;
+      try {
+        ruleResult = ruleEngine.evaluatePreRouting(
+          {
+            input: request.state,
+            compiled: request,
+            route: { eligibleProviderIds: [] },
+          },
+          decisionId,
+        );
+      } catch (err) {
+        const elapsedMs = Date.now() - startMs;
+        const receipt = buildFailureReceipt(
+          decisionId,
+          requestHash,
+          startedAt,
+          elapsedMs,
+          err,
+          [],
+        );
+        emitter.emit("choice.failed", {
+          request,
+          receipt,
+          error: err as Error,
+        });
+        throw err;
+      }
 
       // shortCircuit: return synthetic response immediately
       if (ruleResult.shortCircuit) {
@@ -150,22 +197,45 @@ export function createDex(config: DexConfig): Dex {
             routing: config.routing,
             circuit,
             health,
+            observations,
           },
         );
 
-        // Post-response rules
-        ruleEngine.evaluatePostResponse(
-          {
-            input: request.state,
-            compiled: request,
-            route: {
-              selectedProviderId: result.selectedProviderId,
-              eligibleProviderIds: result.eligibleProviderIds,
+        // Post-response rules. A `reject` here also throws; surface it as a
+        // post-route failure with reason=rule_rejected so the audit trail is
+        // consistent with pre-routing rejects.
+        try {
+          ruleEngine.evaluatePostResponse(
+            {
+              input: request.state,
+              compiled: request,
+              route: {
+                selectedProviderId: result.selectedProviderId,
+                eligibleProviderIds: result.eligibleProviderIds,
+              },
+              response: result.response,
             },
-            response: result.response,
-          },
-          decisionId,
-        );
+            decisionId,
+          );
+        } catch (postErr) {
+          const elapsedMs = Date.now() - startMs;
+          const receipt = buildFailureReceipt(
+            decisionId,
+            requestHash,
+            startedAt,
+            elapsedMs,
+            postErr,
+            result.attempts,
+            result.eligibleProviderIds,
+            result.selectedProviderId,
+          );
+          emitter.emit("choice.failed", {
+            request,
+            receipt,
+            error: postErr as Error,
+          });
+          throw postErr;
+        }
 
         const elapsedMs = Date.now() - startMs;
         const receipt: DecisionReceipt = {
@@ -176,6 +246,7 @@ export function createDex(config: DexConfig): Dex {
             eligibleProviderIds: result.eligibleProviderIds,
             selectedProviderId: result.selectedProviderId,
             attempts: result.attempts,
+            ...(result.routing ? { routing: result.routing } : {}),
           },
           timing: { startedAt, elapsedMs },
           usage: result.usage,
@@ -199,19 +270,16 @@ export function createDex(config: DexConfig): Dex {
         return result.response;
       } catch (err) {
         const elapsedMs = Date.now() - startMs;
-        const attempts: ProviderAttempt[] = [];
-        // We don't have direct access to attempts on error path; build minimal receipt.
-        const receipt: DecisionReceipt = {
+        // P0-3: shared failure-receipt builder preserves the routing layer's
+        // attempt trace and tags the reason. See buildFailureReceipt for
+        // details.
+        const receipt = buildFailureReceipt(
           decisionId,
           requestHash,
-          rules: ruleResult.matches.map((m) => ({ id: m.ruleSetId, version: m.ruleSetVersion })),
-          route: {
-            eligibleProviderIds: [],
-            selectedProviderId: "",
-            attempts,
-          },
-          timing: { startedAt, elapsedMs },
-        };
+          startedAt,
+          elapsedMs,
+          err,
+        );
 
         emitter.emit("choice.failed", {
           request,
@@ -254,4 +322,75 @@ function buildEmptyReceipt(
     },
     timing: { startedAt, elapsedMs: Date.now() - startMs },
   };
+}
+
+/**
+ * Build a failure receipt from any thrown error. P0-3 audit consistency:
+ * failures from every layer (pre-routing rule, route, post-routing rule)
+ * emit the same receipt shape, with attempts preserved when available
+ * and a RouteFailureReason attached when the error carries one.
+ */
+function buildFailureReceipt(
+  decisionId: string,
+  requestHash: string,
+  startedAt: string,
+  elapsedMs: number,
+  err: unknown,
+  prefilledAttempts: readonly ProviderAttempt[] = [],
+  prefilledEligibleProviderIds: readonly string[] = [],
+  prefilledSelectedProviderId = "",
+): DecisionReceipt {
+  let attempts: readonly ProviderAttempt[] = prefilledAttempts;
+  let eligibleProviderIds: readonly string[] = prefilledEligibleProviderIds;
+  let selectedProviderId = prefilledSelectedProviderId;
+  let reason: RouteFailureReason | undefined;
+  if (isRouteExecutionFailure(err)) {
+    if (attempts.length === 0) attempts = err.attempts;
+    reason = err.reason;
+    if (err.code === "NO_ELIGIBLE_PROVIDER" || err.code === "UNKNOWN_ROUTE") {
+      // No providers were tried.
+    } else {
+      eligibleProviderIds = Array.from(new Set(attempts.map((a) => a.providerId)));
+      if (attempts.length > 0 && selectedProviderId === "") {
+        selectedProviderId = attempts[attempts.length - 1].providerId;
+      }
+    }
+  } else if (isDexError(err)) {
+    reason = mapDexErrorToReason(err.code);
+  }
+  return {
+    decisionId,
+    requestHash,
+    rules: [],
+    route: {
+      eligibleProviderIds,
+      selectedProviderId,
+      attempts,
+      ...(reason !== undefined ? { reason } : {}),
+    },
+    timing: { startedAt, elapsedMs },
+  };
+}
+
+/**
+ * Map a top-level `DexErrorCode` that escapes the routing layer to a
+ * `RouteFailureReason` for receipt audit. Only codes that originate *above*
+ * the router reach this branch (TEMPLATE_*, MODELER_*, RULE_REJECTED,
+ * INVALID_CHOICE_REQUEST).
+ */
+function mapDexErrorToReason(code: string): RouteFailureReason | undefined {
+  switch (code) {
+    case "TEMPLATE_INVALID":
+    case "TEMPLATE_NOT_FOUND":
+      return "template_invalid";
+    case "MODELING_PROPOSAL_REJECTED":
+    case "MODELER_NOT_FOUND":
+      return "modeling_rejected";
+    case "RULE_REJECTED":
+      return "rule_rejected";
+    case "INVALID_CHOICE_REQUEST":
+      return "invalid_request";
+    default:
+      return undefined;
+  }
 }

@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { createTemplateRegistry } from "@haxitag/yueli-dex";
 import type { TemplatePack } from "@haxitag/yueli-dex";
+import { readJsonBody } from "@/lib/http";
 import type { ChoiceRequest, ChoiceResponse } from "@haxitag/yueli-dex-plugin-sdk";
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json()) as {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = (parsed.body ?? {}) as {
     template?: unknown;
     input?: unknown;
     action?: "prepare" | "intent";
