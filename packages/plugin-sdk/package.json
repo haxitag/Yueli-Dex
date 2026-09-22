@@ -16,5 +16,18 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean"
   },
-  "license": "UNLICENSED"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haxitag/Yueli-Dex.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "homepage": "https://github.com/haxitag/Yueli-Dex#readme",
+  "bugs": {
+    "url": "https://github.com/haxitag/Yueli-Dex/issues"
+  },
+  "author": "Yueli DEX contributors"
 }

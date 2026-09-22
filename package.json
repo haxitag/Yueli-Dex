@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Yueli DEX - Decision Execution Framework for AI Agents",
+  "license": "MIT",
   "workspaces": [
     "packages/*"
   ],
@@ -11,7 +12,8 @@
     "clean": "tsc -b --clean",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "release": "npm run build && node scripts/publish-packages.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
