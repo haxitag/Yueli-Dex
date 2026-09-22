@@ -82,15 +82,15 @@ export function RuleTester() {
       <div className="space-y-6">
         <section className="rounded-xl border border-dex-border bg-dex-surface p-4">
           <h2 className="text-sm font-semibold text-dex-text mb-3">Rule Document</h2>
-          <JsonEditor value={ruleSet} onChange={setRuleSet} height="360px" />
+          <JsonEditor value={ruleSet} onChange={(v) => setRuleSet(v as typeof ruleSet)} height="360px" />
         </section>
         <section className="rounded-xl border border-dex-border bg-dex-surface p-4">
           <h2 className="text-sm font-semibold text-dex-text mb-3">Input ($.input)</h2>
-          <JsonEditor value={input} onChange={setInput} height="100px" />
+          <JsonEditor value={input} onChange={(v) => setInput(v as typeof input)} height="100px" />
         </section>
         <section className="rounded-xl border border-dex-border bg-dex-surface p-4">
           <h2 className="text-sm font-semibold text-dex-text mb-3">Compiled Request ($.compiled)</h2>
-          <JsonEditor value={compiled} onChange={setCompiled} height="160px" />
+          <JsonEditor value={compiled} onChange={(v) => setCompiled(v as typeof compiled)} height="160px" />
         </section>
         <div className="flex gap-2">
           <button

@@ -17,6 +17,7 @@
     "@haxitag/yueli-dex-provider-typesafe": "*",
     "@haxitag/yueli-dex-provider-cloudflare": "*",
     "@haxitag/yueli-dex-provider-vercel": "*",
+    "@haxitag/yueli-dex-templates-core": "*",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"

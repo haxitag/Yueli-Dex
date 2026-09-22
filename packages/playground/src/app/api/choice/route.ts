@@ -7,7 +7,7 @@ import type { PlaygroundDexConfig } from "@/lib/types";
 
 export const maxDuration = 30;
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
   const body = await request.json();
   const { config, choiceRequest, options } = body as {
     config: PlaygroundDexConfig;

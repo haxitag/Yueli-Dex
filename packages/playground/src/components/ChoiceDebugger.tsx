@@ -74,7 +74,7 @@ export function ChoiceDebugger() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config, choiceRequest: request, options }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as typeof result;
       setResult(data);
     } catch (err) {
       setResult({ error: { code: "NETWORK", message: (err as Error).message } });

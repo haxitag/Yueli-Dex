@@ -1,6 +1,4 @@
-import type { ChoiceProvider } from "@haxitag/yueli-dex-plugin-sdk";
-
-export type ProviderKind = "http" | "typesafe" | "cloudflare" | "vercel";
+export type ProviderKind = "http" | "typesafe" | "cloudflare" | "vercel" | "mock";
 
 export interface ProviderConfig {
   id: string;
@@ -17,10 +15,8 @@ export interface ProviderConfig {
   apiKey?: string;
   model?: string;
   headers?: Record<string, string>;
-  // Cloudflare
+  // Cloudflare / Vercel
   accountId?: string;
-  apiToken?: string;
-  // Vercel
   apiToken?: string;
 }
 

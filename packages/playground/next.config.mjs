@@ -8,6 +8,7 @@ const nextConfig = {
     "@haxitag/yueli-dex-provider-typesafe",
     "@haxitag/yueli-dex-provider-cloudflare",
     "@haxitag/yueli-dex-provider-vercel",
+    "@haxitag/yueli-dex-templates-core",
   ],
   experimental: {
     serverComponentsExternalPackages: [],

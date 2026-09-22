@@ -115,7 +115,7 @@ export function resolveCredentials(cfg: ProviderConfig): ResolvedCredentials {
   const useEnv = cfg.useEnv === true;
 
   // Helper to pick a key from the pool: explicit keyIndex wins, else time-based distribution.
-  const pickKey = (keys: string[], source: "playground-env" | "default-env"): { key: string; index: number } => {
+  const pickKey = (keys: string[]): { key: string; index: number } => {
     const idx = selectKeyIndex(keys.length, cfg.keyIndex);
     return { key: keys[idx], index: idx };
   };
@@ -127,7 +127,7 @@ export function resolveCredentials(cfg: ProviderConfig): ResolvedCredentials {
     }
     const { keys, source } = resolveKeyPool("DEX_HTTP_API_KEY");
     if (keys.length > 0) {
-      const { key, index } = pickKey(keys, source ?? "default-env");
+      const { key, index } = pickKey(keys);
       return { apiKey: key, keyIndex: index, totalKeys: keys.length, source: source ?? "default-env" };
     }
     return { keyIndex: 0, totalKeys: 0, source: "none" };
@@ -140,7 +140,7 @@ export function resolveCredentials(cfg: ProviderConfig): ResolvedCredentials {
     }
     const { keys, source } = resolveKeyPool("TYPESAFE_API_KEY");
     if (keys.length > 0) {
-      const { key, index } = pickKey(keys, source ?? "default-env");
+      const { key, index } = pickKey(keys);
       return { apiKey: key, keyIndex: index, totalKeys: keys.length, source: source ?? "default-env" };
     }
     return { keyIndex: 0, totalKeys: 0, source: "none" };
@@ -158,7 +158,7 @@ export function resolveCredentials(cfg: ProviderConfig): ResolvedCredentials {
     }
     const { keys, source } = resolveKeyPool("CLOUDFLARE_API_TOKEN");
     if (keys.length > 0) {
-      const { key, index } = pickKey(keys, source ?? "default-env");
+      const { key, index } = pickKey(keys);
       return {
         accountId,
         apiToken: key,
@@ -177,7 +177,7 @@ export function resolveCredentials(cfg: ProviderConfig): ResolvedCredentials {
     }
     const { keys, source } = resolveKeyPool("VERCEL_API_TOKEN");
     if (keys.length > 0) {
-      const { key, index } = pickKey(keys, source ?? "default-env");
+      const { key, index } = pickKey(keys);
       return { apiToken: key, keyIndex: index, totalKeys: keys.length, source: source ?? "default-env" };
     }
     return { keyIndex: 0, totalKeys: 0, source: "none" };
@@ -191,10 +191,15 @@ export function resolveCredentials(cfg: ProviderConfig): ResolvedCredentials {
  * Never returns the actual secret values.
  */
 export function getEnvKeyStatus(): Record<ProviderKind, { configured: boolean; count: number; masked: string[]; source: string }> {
-  const kinds: ProviderKind[] = ["http", "typesafe", "cloudflare", "vercel"];
+  const kinds: ProviderKind[] = ["http", "typesafe", "cloudflare", "vercel", "mock"];
   const result = {} as Record<ProviderKind, { configured: boolean; count: number; masked: string[]; source: string }>;
 
   for (const kind of kinds) {
+    // mock is a built-in, deterministic provider — always available, no env var required.
+    if (kind === "mock") {
+      result[kind] = { configured: true, count: 1, masked: ["builtin"], source: "builtin" };
+      continue;
+    }
     let envName: string;
     if (kind === "http") envName = "DEX_HTTP_API_KEY";
     else if (kind === "typesafe") envName = "TYPESAFE_API_KEY";

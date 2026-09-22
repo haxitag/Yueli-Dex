@@ -5,6 +5,7 @@ import { createHttpProvider } from "@haxitag/yueli-dex-provider-http";
 import { createTypeSafeProvider } from "@haxitag/yueli-dex-provider-typesafe";
 import { createCloudflareProvider } from "@haxitag/yueli-dex-provider-cloudflare";
 import { createVercelProvider } from "@haxitag/yueli-dex-provider-vercel";
+import { createMockJevProvider } from "@/lib/mock-jev-provider";
 import { resolveCredentials } from "@/lib/env";
 import type { PlaygroundDexConfig, ProviderConfig } from "@/lib/types";
 
@@ -38,6 +39,9 @@ export function buildProvider(cfg: ProviderConfig): ChoiceProvider {
         apiToken: creds.apiToken,
         model: cfg.model,
       });
+    case "mock":
+      // Built-in deterministic JEV mock. No credentials, no network.
+      return createMockJevProvider({ id: cfg.id });
     default:
       throw new Error(`Unknown provider kind: ${(cfg as { kind: string }).kind}`);
   }

@@ -5,18 +5,23 @@ import { ChoiceDebugger } from "@/components/ChoiceDebugger";
 import { ProviderTester } from "@/components/ProviderTester";
 import { TemplateTester } from "@/components/TemplateTester";
 import { RuleTester } from "@/components/RuleTester";
+import { TieredDecision } from "@/components/TieredDecision";
+import { I18nProvider, useI18n } from "@/components/I18nProvider";
+import { LanguageToggle } from "@/components/LanguageToggle";
 
-type Tab = "choice" | "provider" | "template" | "rule";
+type Tab = "tiers" | "choice" | "provider" | "template" | "rule";
 
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "choice", label: "Choice Debugger", icon: "🎯" },
-  { id: "provider", label: "Provider Tester", icon: "🔌" },
-  { id: "template", label: "Template Tester", icon: "📋" },
-  { id: "rule", label: "Rule Tester", icon: "⚖️" },
-];
+function PlaygroundBody() {
+  const { t } = useI18n();
+  const [tab, setTab] = useState<Tab>("tiers");
 
-export default function PlaygroundPage() {
-  const [tab, setTab] = useState<Tab>("choice");
+  const tabs: { id: Tab; label: string; icon: string }[] = [
+    { id: "tiers", label: t("tab.tiers"), icon: "🏛" },
+    { id: "choice", label: t("tab.choice"), icon: "🎯" },
+    { id: "provider", label: t("tab.provider"), icon: "🔌" },
+    { id: "template", label: t("tab.template"), icon: "📋" },
+    { id: "rule", label: t("tab.rule"), icon: "⚖️" },
+  ];
 
   return (
     <div className="min-h-screen">
@@ -28,32 +33,33 @@ export default function PlaygroundPage() {
               Y
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-dex-text">Yueli DEX Playground</h1>
-              <p className="text-xs text-dex-muted">Decision Execution Framework — Debug &amp; Test</p>
+              <h1 className="text-lg font-semibold text-dex-text">{t("header.title")}</h1>
+              <p className="text-xs text-dex-muted">{t("header.subtitle")}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-dex-border bg-dex-surface px-3 py-1 text-xs text-dex-muted">
               <span className="h-1.5 w-1.5 rounded-full bg-dex-success" />
-              jev-choice/v1
+              {t("header.statusBadge")}
             </span>
+            <LanguageToggle />
           </div>
         </div>
         {/* Tabs */}
         <div className="mx-auto max-w-7xl px-4">
           <nav className="flex gap-1">
-            {TABS.map((t) => (
+            {tabs.map((t_) => (
               <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
+                key={t_.id}
+                onClick={() => setTab(t_.id)}
                 className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                  tab === t.id
+                  tab === t_.id
                     ? "border-dex-accent text-dex-text"
                     : "border-transparent text-dex-muted hover:text-dex-text"
                 }`}
               >
-                <span className="mr-1.5">{t.icon}</span>
-                {t.label}
+                <span className="mr-1.5">{t_.icon}</span>
+                {t_.label}
               </button>
             ))}
           </nav>
@@ -62,11 +68,20 @@ export default function PlaygroundPage() {
 
       {/* Content */}
       <main className="mx-auto max-w-7xl px-4 py-6">
+        {tab === "tiers" && <TieredDecision />}
         {tab === "choice" && <ChoiceDebugger />}
         {tab === "provider" && <ProviderTester />}
         {tab === "template" && <TemplateTester />}
         {tab === "rule" && <RuleTester />}
       </main>
     </div>
+  );
+}
+
+export default function PlaygroundPage() {
+  return (
+    <I18nProvider>
+      <PlaygroundBody />
+    </I18nProvider>
   );
 }

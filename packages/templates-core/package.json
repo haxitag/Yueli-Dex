@@ -1,0 +1,25 @@
+{
+  "name": "@haxitag/yueli-dex-templates-core",
+  "version": "0.1.0",
+  "description": "Base template pack for Yueli DEX — curated scenario templates labeled by theme / scenario / use case / utility",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@haxitag/yueli-dex": "*",
+    "@haxitag/yueli-dex-plugin-sdk": "*"
+  },
+  "license": "UNLICENSED"
+}

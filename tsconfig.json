@@ -8,6 +8,7 @@
     { "path": "./packages/provider-typesafe" },
     { "path": "./packages/provider-cloudflare" },
     { "path": "./packages/provider-vercel" },
+    { "path": "./packages/templates-core" },
     { "path": "./packages/cli" }
   ]
 }

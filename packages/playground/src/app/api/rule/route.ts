@@ -4,7 +4,7 @@ import type { RuleSet } from "@haxitag/yueli-dex";
 import { isDexError } from "@haxitag/yueli-dex";
 import type { ChoiceRequest } from "@haxitag/yueli-dex-plugin-sdk";
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
   const body = await request.json();
   const { ruleSet, input, compiledRequest, phase } = body as {
     ruleSet: { id: string; version: string; scope: RuleSet["scope"]; document: unknown };

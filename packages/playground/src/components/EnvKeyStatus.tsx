@@ -16,7 +16,7 @@ export function EnvKeyStatus({ kind }: { kind: ProviderKind }) {
   useEffect(() => {
     let active = true;
     fetch("/api/env-config")
-      .then((r) => r.json())
+      .then((r) => r.json() as Promise<Record<string, EnvKeyInfo | null>>)
       .then((data) => {
         if (active) setInfo(data[kind] ?? null);
       })

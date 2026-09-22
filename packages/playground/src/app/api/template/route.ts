@@ -1,22 +1,23 @@
 import { NextResponse } from "next/server";
 import { createTemplateRegistry } from "@haxitag/yueli-dex";
-import type { TemplatePack, ChoiceRequest, ChoiceResponse } from "@haxitag/yueli-dex-plugin-sdk";
+import type { TemplatePack } from "@haxitag/yueli-dex";
+import type { ChoiceRequest, ChoiceResponse } from "@haxitag/yueli-dex-plugin-sdk";
 
-export async function POST(request: Request) {
-  const body = await request.json();
-  const { template, input, action } = body as {
-    template: unknown;
-    input: unknown;
+export async function POST(request: Request): Promise<NextResponse> {
+  const body = (await request.json()) as {
+    template?: unknown;
+    input?: unknown;
     action?: "prepare" | "intent";
     request?: ChoiceRequest;
     response?: ChoiceResponse;
   };
+  const { template, input, action, request: intentRequest, response: intentResponse } = body;
 
   try {
     const pack: TemplatePack = {
       id: "playground-pack",
       version: "0.0.0",
-      templates: [template],
+      templates: [template] as never,
     };
     const registry = createTemplateRegistry([pack]);
 
@@ -26,20 +27,20 @@ export async function POST(request: Request) {
     const lookupKey = templateVersion ? `${templateId}@${templateVersion}` : templateId;
 
     if (action === "intent") {
-      if (!body.request || !body.response) {
+      if (!intentRequest || !intentResponse) {
         return NextResponse.json({ error: "request and response required for intent mapping" }, { status: 400 });
       }
       const intents = registry.toActionIntent({
         template: lookupKey,
-        request: body.request,
-        response: body.response,
+        request: intentRequest,
+        response: intentResponse,
       });
       return NextResponse.json({ intents });
     }
 
     const prepared = await registry.prepare({
       template: lookupKey,
-      input,
+      input: input as never,
     });
     return NextResponse.json({ request: prepared });
   } catch (err) {
