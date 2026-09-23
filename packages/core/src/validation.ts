@@ -382,62 +382,90 @@ function isJsonValue(value: unknown, depth = 0): value is JsonValue {
 /* ------------------------------------------------------------------ */
 
 /**
- * Build a deterministic, normalized ChoiceResponse for a short-circuited
- * rule. The selected option receives probability 1; all other criteria
- * receive 0. Confidence is 1.
+ * Build a single-question answer with probability 1 / confidence 1 for a
+ * rule-pinned choice. Used by full short-circuit responses and by post-route
+ * merges of partial pins.
  */
-export function buildShortCircuitResponse(
+export function buildPinnedAnswer(
   request: ChoiceRequest,
   questionId: string,
   selectedChoice: string,
-): ChoiceResponse {
+): ChoiceAnswer {
   const question = request.questions[questionId];
   if (!question) {
-    throw new Error(`buildShortCircuitResponse: unknown question "${questionId}"`);
+    throw new Error(`buildPinnedAnswer: unknown question "${questionId}"`);
   }
   const criteria = question.criteria;
   if (!Object.prototype.hasOwnProperty.call(criteria, selectedChoice)) {
     throw new Error(
-      `buildShortCircuitResponse: choice "${selectedChoice}" not in criteria of "${questionId}"`,
+      `buildPinnedAnswer: choice "${selectedChoice}" not in criteria of "${questionId}"`,
     );
   }
-
   const probabilities: Record<string, number> = {};
   for (const key of Object.keys(criteria)) {
     probabilities[key] = key === selectedChoice ? 1 : 0;
   }
+  return {
+    type: "choice",
+    choice: selectedChoice,
+    confidence: 1,
+    probabilities,
+  };
+}
 
+/**
+ * Build a deterministic ChoiceResponse that covers EVERY question in the
+ * request with rule-pinned answers. Callers must supply a choice for each
+ * questionId — partial coverage must not invent answers for undecided
+ * questions (that was a P0 false-certainty bug).
+ */
+export function buildShortCircuitResponse(
+  request: ChoiceRequest,
+  decisions: Readonly<Record<string, string>>,
+): ChoiceResponse {
+  const questionIds = Object.keys(request.questions);
   const answers: Record<string, ChoiceAnswer> = {};
-  for (const [qid, q] of Object.entries(request.questions)) {
-    if (qid === questionId) {
-      answers[qid] = {
-        type: "choice",
-        choice: selectedChoice,
-        confidence: 1,
-        probabilities,
-      };
-    } else {
-      // For other questions, short-circuit cannot determine; use first option as deterministic?
-      // Actually a shortCircuit rule targets a specific question. If there are multiple questions,
-      // we should still produce valid answers. We'll use the first criterion for others with
-      // probability 1, but this is an edge case. The spec says shortCircuit must name an existing
-      // question and criterion key.
-      const firstKey = Object.keys(q.criteria)[0];
-      const otherProbs: Record<string, number> = {};
-      for (const k of Object.keys(q.criteria)) {
-        otherProbs[k] = k === firstKey ? 1 : 0;
-      }
-      answers[qid] = {
-        type: "choice",
-        choice: firstKey,
-        confidence: 1,
-        probabilities: otherProbs,
-      };
+  for (const qid of questionIds) {
+    const selected = decisions[qid];
+    if (selected === undefined) {
+      throw new Error(
+        `buildShortCircuitResponse: missing pinned choice for question "${qid}" (partial shortCircuit must not fabricate answers)`,
+      );
     }
+    answers[qid] = buildPinnedAnswer(request, qid, selected);
   }
-
   return {
     model: "yueli-dex/rules@1",
     answers,
   };
+}
+
+/**
+ * Overlay rule-pinned answers onto a provider response. Unpinned questions
+ * keep the provider's answer; pinned ones are forced to confidence 1.
+ */
+export function applyPinnedAnswers(
+  request: ChoiceRequest,
+  response: ChoiceResponse,
+  pinned: Readonly<Record<string, string>>,
+): ChoiceResponse {
+  if (Object.keys(pinned).length === 0) return response;
+  const answers: Record<string, ChoiceAnswer> = { ...response.answers };
+  for (const [qid, choice] of Object.entries(pinned)) {
+    if (!Object.prototype.hasOwnProperty.call(request.questions, qid)) continue;
+    answers[qid] = buildPinnedAnswer(request, qid, choice);
+  }
+  return { ...response, answers };
+}
+
+/**
+ * @deprecated Prefer `buildShortCircuitResponse(request, { [questionId]: choice })`
+ * when all questions are covered. Kept for call-site migration clarity.
+ */
+export function buildShortCircuitResponseForQuestion(
+  request: ChoiceRequest,
+  questionId: string,
+  selectedChoice: string,
+): ChoiceResponse {
+  return buildShortCircuitResponse(request, { [questionId]: selectedChoice });
 }

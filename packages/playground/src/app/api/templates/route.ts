@@ -95,16 +95,32 @@ export async function POST(request: Request): Promise<NextResponse> {
         ruleSetId: m.ruleSetId,
         action: m.action,
       })),
+      pinnedAnswers: result.pinnedAnswers,
       shortCircuit: result.shortCircuit
         ? {
             questionId: result.shortCircuit.match.action.questionId,
             choice: result.shortCircuit.match.action.choice,
             message: result.shortCircuit.match.action.message,
             response: result.shortCircuit.response,
+            complete: true,
           }
-        : null,
+        : Object.keys(result.pinnedAnswers).length > 0
+          ? {
+              // Partial pin: rules decided some questions but not all.
+              // Do NOT claim full local resolution / zero remote.
+              questionId: Object.keys(result.pinnedAnswers)[0],
+              choice: Object.values(result.pinnedAnswers)[0],
+              message: `Partial pin: ${Object.entries(result.pinnedAnswers)
+                .map(([q, c]) => `${q}=${c}`)
+                .join(", ")} — remaining questions need a provider`,
+              response: null,
+              complete: false,
+              pinnedAnswers: result.pinnedAnswers,
+            }
+          : null,
       forcedRoute: result.forcedRoute ?? null,
       constraints: result.constraints,
+      // Only true when every question was pinned (honest zero-remote claim).
       resolvedLocally: result.shortCircuit !== undefined,
     });
   } catch (err) {

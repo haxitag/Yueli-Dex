@@ -58,4 +58,4 @@ export { createDex } from "./dex.js";
 // Re-export rule engine and template compiler for advanced users / testing
 export { createRuleEngine } from "./rules.js";
 export { createTemplateRegistry } from "./templates.js";
-export { validateChoiceRequest, validateChoiceResponse, buildShortCircuitResponse } from "./validation.js";
+export { validateChoiceRequest, validateChoiceResponse, buildShortCircuitResponse, buildPinnedAnswer, applyPinnedAnswers } from "./validation.js";

@@ -37,7 +37,6 @@ export interface MockJevConfig {
 
 const DEFAULT_ID = "mock-jev";
 const DEFAULT_MODEL = "yueli-dex/mock-jev@1";
-const MIN_CONFIDENCE = 0.6;
 
 /** Escape regex metacharacters so user-supplied tokens can't crash the matcher. */
 function escapeRe(s: string): string {
@@ -53,10 +52,31 @@ function tokensForOption(choice: string, criterion: unknown): string[] {
   }
   if (typeof criterion === "string") {
     for (const word of criterion.toLowerCase().split(/\s+/)) {
-      if (word.length >= 4) out.push(word);
+      // Strip trailing punctuation so "refunds," → "refunds"
+      const cleaned = word.replace(/[^a-z0-9]+/gi, "");
+      if (cleaned.length >= 4) out.push(cleaned);
+      // Light stemming: refunds→refund, payments→payment so state "refund"
+      // matches criteria text "refunds".
+      if (cleaned.length >= 5 && cleaned.endsWith("s")) {
+        out.push(cleaned.slice(0, -1));
+      }
     }
   }
   return Array.from(new Set(out.map((t) => t.toLowerCase())));
+}
+
+/** Score how many option tokens appear in the state string (substring + word). */
+function scoreOption(stateStr: string, tokens: string[]): number {
+  let score = 1; // baseline so every option has a non-zero share
+  for (const tok of tokens) {
+    // Prefer word-boundary hits, but also accept substring for short stems
+    // (e.g. "refund" inside "refunded") so the canonical support-triage
+    // example ("need a refund") actually picks billing over a flat tie.
+    const re = new RegExp(`\\b${escapeRe(tok)}`, "gi");
+    const hits = stateStr.match(re);
+    if (hits) score += hits.length;
+  }
+  return score;
 }
 
 export function createMockJevProvider(config: MockJevConfig = {}): ChoiceProvider {
@@ -79,7 +99,24 @@ export function createMockJevProvider(config: MockJevConfig = {}): ChoiceProvide
     request: ChoiceRequest,
     _context: ProviderCallContext,
   ): Promise<ChoiceResponse> {
-    const stateStr = JSON.stringify(request.state ?? null).toLowerCase();
+    const stateStr = (() => {
+      // Prefer human text fields over raw JSON key names so that keys like
+      // "account" / "accountPlan" do not inflate the "account" option score.
+      const state = request.state;
+      if (typeof state === "string") return state.toLowerCase();
+      if (state && typeof state === "object" && !Array.isArray(state)) {
+        const parts: string[] = [];
+        for (const v of Object.values(state as Record<string, unknown>)) {
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+            parts.push(String(v));
+          } else if (v != null) {
+            parts.push(JSON.stringify(v));
+          }
+        }
+        return parts.join(" ").toLowerCase();
+      }
+      return JSON.stringify(state ?? null).toLowerCase();
+    })();
 
     const answers: Record<string, ChoiceAnswer> = {};
     let totalInput = 0;
@@ -92,12 +129,7 @@ export function createMockJevProvider(config: MockJevConfig = {}): ChoiceProvide
       const scores: Record<string, number> = {};
       let totalScore = 0;
       for (const choice of choices) {
-        let score = 1; // baseline so every option has a non-zero share
-        for (const tok of tokensForOption(choice, question.criteria[choice])) {
-          const re = new RegExp(`\\b${escapeRe(tok)}\\b`, "gi");
-          const hits = stateStr.match(re);
-          if (hits) score += hits.length;
-        }
+        const score = scoreOption(stateStr, tokensForOption(choice, question.criteria[choice]));
         scores[choice] = score;
         totalScore += score;
       }
@@ -121,7 +153,9 @@ export function createMockJevProvider(config: MockJevConfig = {}): ChoiceProvide
       answers[questionId] = {
         type: "choice",
         choice: topChoice,
-        confidence: Math.max(MIN_CONFIDENCE, topProb),
+        // Honest confidence = top probability. Do not floor at 0.6 — a flat
+        // distribution (all options tied) must not claim decisive confidence.
+        confidence: topProb,
         probabilities,
       };
 

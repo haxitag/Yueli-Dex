@@ -1567,6 +1567,90 @@ const templates: readonly TemplateDefinition[] = [
       ],
     },
   },
+
+  {
+    apiVersion: "yueli-dex-template/v1",
+    id: "arxiv-benchmark-screen",
+    version: "1.0.0",
+    meta: {
+      theme: "automation",
+      scenario: "paper-screening",
+      useCase:
+        "From title and abstract alone, decide whether a paper proposes, releases, or systematically evaluates a benchmark / evaluation suite / leaderboard / competition, and classify its subtype",
+      utility:
+        "Literature-stream benchmark screening for LLM-as-annotator pipelines; a single 4+1 verdict eliminates the boolean/subtype label contradiction, the needs_review fallback keeps the labeled set clean, and every decision lands as a JSONL training sample (verdict + derived boolean + probabilities + decisionId)",
+      references: [
+        "Industry direction #6: 搜索与数据处理 (natural-language record filtering; same family as nl-record-filter)",
+        "LLM-as-annotator labeling pipelines (5000-sample fine-tune data generation)",
+      ],
+      exampleInput: {
+        title: "HELM: A Holistic Evaluation of Language Models",
+        abstract:
+          "We present HELM, a holistic evaluation framework for language models spanning numerous scenarios and metrics.",
+        categories: ["cs.CL"],
+      },
+    },
+    state: {
+      from: {
+        title: "$.title",
+        abstract: "$.abstract",
+        categories: "$.categories",
+      },
+    },
+    choices: [
+      {
+        id: "verdict",
+        instructions:
+          "Judge from title and abstract alone. If the main contribution is a new model or method — even one reporting SOTA on existing benchmarks — it is NOT a benchmark paper.",
+        criteria: {
+          new_benchmark:
+            "Main contribution is a new dataset, evaluation suite, test set, or evaluation protocol (HELM, BIG-bench, MMLU style)",
+          new_leaderboard:
+            "Main contribution is a leaderboard, competition, or continuous evaluation platform",
+          eval_existing:
+            "Systematic evaluation, comparison study, or meta-analysis of existing models/methods; proposes no new model",
+          not_benchmark:
+            "Main contribution is a new model, method, theory, or application; existing benchmarks are used only for validation",
+          needs_review:
+            "Title and abstract are insufficient to judge (missing abstract, ambiguous, or multiple co-equal contributions)",
+        },
+      },
+    ],
+    constraints: { requireFallbackOption: "needs_review", maxOptions: 8 },
+    actions: {
+      verdict: {
+        new_benchmark: { kind: "paper.label", label: "benchmark.new" },
+        new_leaderboard: { kind: "paper.label", label: "benchmark.leaderboard" },
+        eval_existing: { kind: "paper.label", label: "benchmark.eval" },
+        not_benchmark: { kind: "paper.label", label: "none" },
+        needs_review: { kind: "review.request" },
+      },
+    },
+    examples: {
+      fixtures: [
+        {
+          name: "systematic-eval-framework",
+          input: {
+            title: "HELM: A Holistic Evaluation of Language Models",
+            abstract:
+              "We present HELM, a holistic evaluation framework for language models spanning numerous scenarios and metrics.",
+            categories: ["cs.CL"],
+          },
+          expected: { verdict: "eval_existing" },
+        },
+        {
+          name: "new-model-using-benchmarks",
+          input: {
+            title: "GPT-5: Scaling Language Models with Sparse Attention",
+            abstract:
+              "We introduce a new sparse attention mechanism reaching SOTA on MMLU and GSM8K.",
+            categories: ["cs.LG"],
+          },
+          expected: { verdict: "not_benchmark" },
+        },
+      ],
+    },
+  },
 ];
 
 export const TEMPLATES: readonly TemplateDefinition[] = templates;

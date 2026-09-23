@@ -16,7 +16,7 @@ import type {
   RouteFailureReason,
 } from "./types.js";
 import { generateDecisionId, hashRequest } from "./utils.js";
-import { validateChoiceRequest } from "./validation.js";
+import { applyPinnedAnswers, validateChoiceRequest } from "./validation.js";
 
 /**
  * Create a DEX instance.
@@ -157,7 +157,7 @@ export function createDex(config: DexConfig): Dex {
         throw err;
       }
 
-      // shortCircuit: return synthetic response immediately
+      // Full shortCircuit: every question is pinned → synthetic response, zero remote.
       if (ruleResult.shortCircuit) {
         const elapsedMs = Date.now() - startMs;
         const receipt: DecisionReceipt = {
@@ -178,6 +178,10 @@ export function createDex(config: DexConfig): Dex {
         });
         return ruleResult.shortCircuit.response;
       }
+
+      // Partial pins: force those answers after the provider returns. Do NOT
+      // invent confidence-1 answers for undecided questions (P0 honesty).
+      const pinnedAnswers = ruleResult.pinnedAnswers;
 
       // Determine route name: explicit option > forced by rule > default
       const routeName = options?.route ?? ruleResult.forcedRoute;
@@ -201,6 +205,8 @@ export function createDex(config: DexConfig): Dex {
           },
         );
 
+        const mergedResponse = applyPinnedAnswers(request, result.response, pinnedAnswers);
+
         // Post-response rules. A `reject` here also throws; surface it as a
         // post-route failure with reason=rule_rejected so the audit trail is
         // consistent with pre-routing rejects.
@@ -213,7 +219,7 @@ export function createDex(config: DexConfig): Dex {
                 selectedProviderId: result.selectedProviderId,
                 eligibleProviderIds: result.eligibleProviderIds,
               },
-              response: result.response,
+              response: mergedResponse,
             },
             decisionId,
           );
@@ -263,11 +269,11 @@ export function createDex(config: DexConfig): Dex {
 
         emitter.emit("choice.completed", {
           request,
-          response: result.response,
+          response: mergedResponse,
           receipt,
         });
 
-        return result.response;
+        return mergedResponse;
       } catch (err) {
         const elapsedMs = Date.now() - startMs;
         // P0-3: shared failure-receipt builder preserves the routing layer's

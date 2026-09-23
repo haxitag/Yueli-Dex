@@ -98,6 +98,12 @@ function resolveKeyPool(envName: string): { keys: string[]; source: "playground-
   if (singularRaw) {
     return { keys: [singularRaw], source: envSource(envName) };
   }
+  // Backward-compatible aliases for HTTP provider (docs/.env.example historically
+  // used HTTP_PROVIDER_API_KEY while the runtime reads DEX_HTTP_API_KEY).
+  if (envName === "DEX_HTTP_API_KEY") {
+    const alias = resolveKeyPool("HTTP_PROVIDER_API_KEY");
+    if (alias.keys.length > 0) return alias;
+  }
   return { keys: [], source: undefined };
 }
 

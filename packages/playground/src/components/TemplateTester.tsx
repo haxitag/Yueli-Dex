@@ -22,7 +22,15 @@ interface CatalogEntry {
 
 interface RuleEvalResult {
   matched: Array<{ ruleId: string; ruleSetId: string; action: Record<string, unknown> }>;
-  shortCircuit: { questionId?: string; choice?: string; message?: string; response: ChoiceResponse } | null;
+  pinnedAnswers?: Record<string, string>;
+  shortCircuit: {
+    questionId?: string;
+    choice?: string;
+    message?: string;
+    response: ChoiceResponse | null;
+    complete?: boolean;
+    pinnedAnswers?: Record<string, string>;
+  } | null;
   forcedRoute: string | null;
   resolvedLocally: boolean;
   rejected?: { code: string; message: string; recoveryHint?: string };
@@ -50,11 +58,14 @@ const THEME_BADGES: Record<string, string> = {
 
 const DEFAULT_RUNTIME = {
   providers: [
-    { id: "local-jev", kind: "http", endpoint: "http://localhost:9876", useEnv: true },
+    // Built-in deterministic mock — zero credentials, zero network.
+    // Out of the box Template Tester E2E must work without a local JEV on :9876.
+    // Switch kind to "typesafe" / "cloudflare" / "vercel" / "http" once configured.
+    { id: "mock-jev", kind: "mock" },
   ],
   routing: {
     default: {
-      providerIds: ["local-jev"],
+      providerIds: ["mock-jev"],
       maxAttempts: 1,
       circuitFailureThreshold: 3,
       circuitCooldownMs: 60000,
@@ -371,12 +382,21 @@ export function TemplateTester() {
                     {t("tt.rejectedWithReason", { message: ruleResult.rejected.message })}
                     <div className="mt-1 text-red-400/70">{t("tt.rejected")}</div>
                   </div>
-                ) : ruleResult.shortCircuit ? (
+                ) : ruleResult.shortCircuit?.complete !== false && ruleResult.shortCircuit?.response ? (
                   <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
                     {t("tt.shortCircuitHit", { questionId: ruleResult.shortCircuit.questionId ?? "", choice: ruleResult.shortCircuit.choice ?? "" })}
                     <div className="mt-1 text-emerald-400/70">
                       {ruleResult.shortCircuit.message ?? ""} · 零远程调用 · model: &quot;yueli-dex/rules@1&quot;
                     </div>
+                  </div>
+                ) : ruleResult.shortCircuit || (ruleResult.pinnedAnswers && Object.keys(ruleResult.pinnedAnswers).length > 0) ? (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300">
+                    {t("tt.partialPin", {
+                      pins: Object.entries(ruleResult.shortCircuit?.pinnedAnswers ?? ruleResult.pinnedAnswers ?? {})
+                        .map(([q, c]) => `${q}=${c}`)
+                        .join(", "),
+                    })}
+                    <div className="mt-1 text-amber-400/70">{t("tt.partialPinHint")}</div>
                   </div>
                 ) : (
                   <div className="rounded-lg border border-dex-border bg-dex-bg p-3 text-xs text-dex-muted">

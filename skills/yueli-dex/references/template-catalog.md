@@ -68,6 +68,7 @@ judgment triggers.
 | `qa-check-targeting` | developer-tooling | qa-check-targeting | 逐文件裁决是否值得追加检查 | 让检查预算与风险成比例；测试/编码模型和人类只确认被标记处 |
 | `review-queue` | customer-operations | review-queue-priority | 人工复核队列排序：深度 × 时机 | 稀缺审阅时间落在错误代价最高处；商业落地最扎实方向的收口环节 |
 | `record-filter` | automation | nl-record-filter | 按自然语言规则逐条筛选记录 | 处理难穷举成关键词、可举例说明的条件；入选记录原样透传 |
+| `arxiv-benchmark-screen` | automation | paper-screening | 从标题+摘要判断论文是否为 benchmark/评测类并归类子类型 | 单一 4+1 判决消除布尔/子类型标签矛盾；needs_review 兜底保证标注集干净；每条决策直接落 JSONL 训练样本 |
 | `proactive-assist` | communication | proactive-assist | 逐时刻裁决：现在提示/保持沉默/仅记录 | 产品成败取决于误打扰率；默认沉默，打扰必须自己挣得时机 |
 
 Each template's `meta.references` records the ecosystem evidence (source

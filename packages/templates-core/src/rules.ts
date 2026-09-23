@@ -5,10 +5,11 @@ import type { RuleSet } from "@haxitag/yueli-dex";
  *
  * Design principle (from the project's three-layer decision chain):
  * **anything that can be rule-ified runs in the local rule engine and never
- * touches a remote Jev-class model.** Rules are evaluated pre-routing in
- * `dex.choice()`; a `shortCircuit` match returns an honestly-labeled synthetic
- * response (`model: "yueli-dex/rules@1"`) with zero provider calls, and a
- * `reject` match blocks the request outright.
+ * touches a remote Jev-class model** — but only when the rule set covers
+ * *every* question in the Choice request. A single-question shortCircuit on a
+ * multi-question template is a *partial pin*: undecided questions still route
+ * to a provider, and pinned answers are merged afterward with confidence 1.
+ * Never invent confidence-1 answers for uncovered questions.
  *
  * Rule conditions are restricted JSON-path comparisons evaluated against the
  * *compiled Choice state* (`$.input.*` — the fields produced by the template's

@@ -53,9 +53,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       matches: result.matches,
       forcedRoute: result.forcedRoute,
       constraints: result.constraints,
+      pinnedAnswers: result.pinnedAnswers,
       shortCircuit: result.shortCircuit ? {
         response: result.shortCircuit.response,
         ruleId: result.shortCircuit.match.ruleId,
+        complete: true,
+      } : Object.keys(result.pinnedAnswers).length > 0 ? {
+        response: null,
+        complete: false,
+        pinnedAnswers: result.pinnedAnswers,
       } : undefined,
     });
   } catch (err) {

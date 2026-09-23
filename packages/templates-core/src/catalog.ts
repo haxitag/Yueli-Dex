@@ -130,7 +130,7 @@ export const SCENARIO_DIRECTIONS: readonly ScenarioDirection[] = [
       "自然语言筛选、实体匹配、图提取、SQL 条件扩展。适合很难穷举成关键词规则、却能通过具体案例说明的条件。",
     scalesFirst: false,
     themes: ["developer-tooling", "automation"],
-    scenarioKeywords: ["structured-extract", "graph-hop", "nl-record-filter"],
+    scenarioKeywords: ["structured-extract", "graph-hop", "nl-record-filter", "paper-screening"],
   },
   {
     id: "realtime-assist",

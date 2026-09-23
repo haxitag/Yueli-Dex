@@ -416,7 +416,13 @@ export interface RuleEngine {
   /**
    * Evaluate rules against the pre-routing context (input + compiled request).
    * Returns matched actions in precedence order. A `reject` action throws.
-   * A `shortCircuit` action returns a synthetic ChoiceResponse.
+   *
+   * shortCircuit semantics (P0 honesty):
+   * - `pinnedAnswers` accumulates every matched shortCircuit (questionId → choice).
+   * - `shortCircuit` is only set when pinned answers cover ALL questions in the
+   *   request (full local resolution, zero remote call).
+   * - Partial pins must NOT fabricate answers for undecided questions; callers
+   *   (dex.choice) route the remainder to a provider and merge pins afterward.
    */
   evaluatePreRouting(
     ctx: Omit<RuleContext, "route" | "response"> & {
@@ -425,6 +431,12 @@ export interface RuleEngine {
     decisionId: string,
   ): {
     readonly matches: readonly RuleMatch[];
+    /** questionId → choice for every shortCircuit that fired. */
+    readonly pinnedAnswers: Readonly<Record<string, string>>;
+    /**
+     * Present only when every question is pinned. Contains the synthetic
+     * ChoiceResponse (`model: "yueli-dex/rules@1"`) and the last matching rule.
+     */
     readonly shortCircuit?: { response: ChoiceResponse; match: RuleMatch };
     readonly forcedRoute?: string;
     readonly constraints: {
@@ -496,7 +508,6 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
       // is stable in modern engines (Node ≥12).
       matches.sort((a, b) => lattice[a.action.kind] - lattice[b.action.kind]);
 
-      let shortCircuit: { response: ChoiceResponse; match: RuleMatch } | undefined;
       let forcedRoute: string | undefined;
       let requireFallbackOption: string | undefined;
       let allowedActionKinds: readonly string[] | undefined;
@@ -507,6 +518,10 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
       const routeSeenAt: Map<number, string> = new Map();
       // (scope, questionId) -> chosen choice (for shortCircuit conflict detection)
       const shortCircuitSeenAt: Map<string, string> = new Map();
+      // Accumulated pins across questions (questionId → choice). Last matching
+      // rule per question wins after conflict checks; higher scopes run later.
+      const pinned: Record<string, string> = {};
+      let lastShortCircuitMatch: RuleMatch | undefined;
 
       for (const match of matches) {
         switch (match.action.kind) {
@@ -581,22 +596,29 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
               // Idempotent convergence — already applied, skip.
               break;
             }
-            shortCircuit = {
-              response: buildShortCircuitResponse(
-                ctx.compiled,
-                match.action.questionId,
-                match.action.choice,
-              ),
-              match,
-            };
+            pinned[match.action.questionId] = match.action.choice;
+            lastShortCircuitMatch = match;
             shortCircuitSeenAt.set(scopeKey, match.action.choice);
             break;
           }
         }
       }
 
+      const questionIds = Object.keys(ctx.compiled.questions);
+      const complete =
+        questionIds.length > 0 && questionIds.every((qid) => Object.prototype.hasOwnProperty.call(pinned, qid));
+
+      let shortCircuit: { response: ChoiceResponse; match: RuleMatch } | undefined;
+      if (complete && lastShortCircuitMatch) {
+        shortCircuit = {
+          response: buildShortCircuitResponse(ctx.compiled, pinned),
+          match: lastShortCircuitMatch,
+        };
+      }
+
       return {
         matches,
+        pinnedAnswers: pinned,
         shortCircuit,
         forcedRoute,
         constraints: { requireFallbackOption, allowedActionKinds },
