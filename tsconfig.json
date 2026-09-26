@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/plugin-sdk" },
+    { "path": "./packages/core" },
+    { "path": "./packages/provider-http" },
+    { "path": "./packages/provider-typesafe" },
+    { "path": "./packages/provider-cloudflare" },
+    { "path": "./packages/provider-vercel" },
+    { "path": "./packages/templates-core" },
+    { "path": "./packages/cli" }
+  ]
+}

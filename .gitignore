@@ -1,0 +1,22 @@
+.DS_Store
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Next.js build output
+.next/
+out/
+
+# Playground build artifacts
+packages/playground/.next/
+packages/playground/dist/
+
+# Test directories are published so the "91+ tests" claim stays verifiable downstream.
+# Keep fixtures free of real credentials (see .env* rules above).
+

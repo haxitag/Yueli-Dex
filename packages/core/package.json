@@ -1,0 +1,37 @@
+{
+  "name": "@haxitag/yueli-dex",
+  "version": "0.1.0",
+  "description": "Yueli DEX - Choice-only Decision Execution Framework for AI Agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@haxitag/yueli-dex-plugin-sdk": "^0.1.0"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haxitag/Yueli-Dex.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/haxitag/Yueli-Dex#readme",
+  "bugs": {
+    "url": "https://github.com/haxitag/Yueli-Dex/issues"
+  },
+  "author": "Yueli DEX contributors"
+}
