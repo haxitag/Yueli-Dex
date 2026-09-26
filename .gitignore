@@ -17,6 +17,6 @@ out/
 packages/playground/.next/
 packages/playground/dist/
 
-# Test directories (untracked by request: keep test data out of the public repo)
-packages/*/test/
+# Test directories are published so the "91+ tests" claim stays verifiable downstream.
+# Keep fixtures free of real credentials (see .env* rules above).
 

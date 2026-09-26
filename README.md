@@ -6,7 +6,7 @@ Yueli DEX (`@haxitag/yueli-dex`) is a Choice-only decision framework for AI agen
 
 ## Project status
 
-Core TypeScript packages are implemented and tested (91+ tests): the SDK, plugin contracts, four provider adapters, a labeled base template pack with local rule sets, the CLI, and an interactive playground. npm publication is pending.
+Core TypeScript packages are implemented and tested (159 tests across 11 test files): the SDK, plugin contracts, four provider adapters, a labeled base template pack with local rule sets, the CLI, and an interactive playground. Packages build from source; npm publication is pending.
 
 ## 核心执行策略：本地规则优先
 
@@ -99,7 +99,7 @@ cd packages/playground && npm run dev   # http://localhost:34567
 
 - [Choice-only 设计规格](docs/superpowers/specs/2026-09-21-yueli-dex-choice-design.md) — 契约、安全边界、v1 固定决策
 - [三级决策建模链技术设计](docs/三级决策建模链技术设计.md) — 规则层 / 模板与建模并行层 / 策略路由层
-- [决策路由、建模和服务稳定路由组件规划](docs/Yueli%20DEX（Decision%20Execution）决策路由、建模和服务稳定路由组件.md) — 项目初始规划
+- [从「词表 + 规则」迁移到 Yueli DEX](docs/已用规则引擎和特征、分类路由的部分迁移都yueli-dex.md) — 三层拆分迁移指南：本地规则 / Choice / 执行与权限
 - [调用说明与使用手册](docs/调用说明与使用手册.md) — API 手册、四 host 接入、密钥池、成本与校准
 
 ### Agent Skill（skills/yueli-dex/）
