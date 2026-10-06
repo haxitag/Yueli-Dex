@@ -1,7 +1,7 @@
 {
   "name": "@haxitag/yueli-dex-provider-cloudflare",
-  "version": "0.1.0",
-  "description": "Cloudflare Workers AI / Account REST provider for Yueli DEX",
+  "version": "0.2.0",
+  "description": "Cloudflare Workers AI Clef / Clef-flash decision-model provider for Yueli DEX",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

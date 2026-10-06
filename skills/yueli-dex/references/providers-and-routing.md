@@ -8,9 +8,24 @@ policy. Routing never mutates the request body.
 | Host | Package | Transport |
 | --- | --- | --- |
 | TypeSafe | `@haxitag/yueli-dex-provider-typesafe` | `POST https://api.typesafe.ai/v1/systemone` (model `jev-latest`) |
-| Cloudflare | `@haxitag/yueli-dex-provider-cloudflare` | Workers AI binding `env.AI.run("typesafe/jev")` or Account REST `/ai/run` |
+| Cloudflare | `@haxitag/yueli-dex-provider-cloudflare` | Workers AI binding `env.AI.run("@cf/cloudflare/clef")` or Account REST `/ai/run` (Clef / Clef-flash) |
 | Vercel | `@haxitag/yueli-dex-provider-vercel` | AI Gateway evaluation (`typesafe-ai/jev`), OIDC or bearer token |
 | Self-hosted | `@haxitag/yueli-dex-provider-http` | Any service declaring `jev-choice/v1` compatibility |
+
+### Cloudflare Clef models
+
+The Cloudflare provider targets Cloudflare's open-source **Clef** decision
+models (Jev-compatible Choice API). Model precedence:
+`request.model` > provider `config.model` > `clef`.
+
+| Model | Workers AI id | Use for |
+| --- | --- | --- |
+| `clef` | `@cf/cloudflare/clef` | Default; highest quality (27B backbone, median ~209ms) |
+| `clef-flash` | `@cf/cloudflare/clef-flash` | Hot paths / high QPS (9B backbone, median ~39ms, p95 ~122ms) |
+
+Shorthands (`clef`, `clef-flash`) and full ids (`@cf/cloudflare/clef[-flash]`)
+are both accepted. Register two providers (one per model) to route
+`clef-flash` primary with `clef` fallback.
 
 Self-hosted services must accept and return the canonical Choice body.
 Field-name drift, label-only responses, or unnormalized probabilities are not

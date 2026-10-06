@@ -73,10 +73,42 @@ const intents = dex.templates.toActionIntent({ template: "support-triage", reque
 | --- | --- |
 | [`@haxitag/yueli-dex`](packages/core) | Choice API、校验、规则引擎、路由、回执、插件注册 |
 | [`@haxitag/yueli-dex-plugin-sdk`](packages/plugin-sdk) | 四类插件的版本化契约（provider / template-pack / modeler / context-provider） |
-| [`@haxitag/yueli-dex-provider-*`](packages/provider-typesafe) | TypeSafe / Cloudflare / Vercel / HTTP 四种 host 适配器（仅传输与鉴权） |
+| [`@haxitag/yueli-dex-provider-*`](packages/provider-typesafe) | TypeSafe / Cloudflare（Clef 与 Clef-flash）/ Vercel / HTTP 四种 host 适配器（仅传输与鉴权） |
 | [`@haxitag/yueli-dex-templates-core`](packages/templates-core) | 基础模板包：16 个场景模板（覆盖 6 大决策模式，四维度标签）+ 本地规则集 + 调用示例生成器 |
 | [`@haxitag/yueli-dex-cli`](packages/cli) | 校验、provider 探测、fixture 执行 |
 | `@haxitag/yueli-dex-playground` | 交互式调试器（见下） |
+
+## Cloudflare Clef 决策模型接入
+
+Cloudflare 开源的 [Clef 决策模型](https://blog.cloudflare.com/clef-decision-models/)（Apache 2.0，Jev Choice API 兼容）已通过 `@haxitag/yueli-dex-provider-cloudflare` 一等接入：
+
+| 模型 | Workers AI ID | 适用场景 | 延迟（实测中位 / p95） |
+| --- | --- | --- | --- |
+| `clef` | `@cf/cloudflare/clef` | 默认；最高质量（27B 基座） | ~209ms / ~239ms |
+| `clef-flash` | `@cf/cloudflare/clef-flash` | 热路径 / 高 QPS（9B 基座） | ~39ms / ~122ms |
+
+```ts
+import { createCloudflareProvider } from "@haxitag/yueli-dex-provider-cloudflare";
+
+// clef-flash 主力（低延迟）+ clef 兜底（高质量）的双 provider 路由
+const flash = createCloudflareProvider({
+  id: "cf-clef-flash",
+  accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+  apiToken: process.env.CLOUDFLARE_API_TOKEN,
+  model: "clef-flash",
+});
+const primary = createCloudflareProvider({ id: "cf-clef" /* model 默认 clef */ });
+
+const dex = createDex({
+  providers: [flash, primary],
+  routing: { default: { providerIds: ["cf-clef-flash", "cf-clef"], maxAttempts: 2, /* … */ } },
+});
+
+// 也可按请求切换模型：model 简写或完整 ID 均可
+await dex.choice({ ...request, model: "clef-flash" });
+```
+
+模型优先级：`request.model` > provider `config.model` > `clef`。支持 Workers AI binding（Worker 运行时零 REST 开销）与 Account REST 双通道；详见 [Clef 集成指南](docs/2026-10-06-clef-integration.md)。
 
 ## Playground：场景用例的实际调用验证
 
@@ -115,7 +147,7 @@ cd packages/playground && npm run dev   # http://localhost:34567
 - [TypeSafe Choice](https://docs.typesafe.ai/primitives/choice)
 - [TypeSafe HTTP quick start](https://docs.typesafe.ai/introduction/quickstart)
 - [TypeSafe agent skill](https://docs.typesafe.ai/agent-skill)（对照：官方 skill 只教自家 API；本项目的 skill 覆盖四种 host + 建模 + 插件架构）
-- [Cloudflare `typesafe/jev`](https://developers.cloudflare.com/ai/models/typesafe/jev/)
+- [Cloudflare Clef decision models](https://blog.cloudflare.com/clef-decision-models/)（开源权重：[Cloudflare/clef](https://huggingface.co/Cloudflare/clef)；模型文档：[developers.cloudflare.com/workers-ai/models/clef](https://developers.cloudflare.com/workers-ai/models/clef/)）
 - [Vercel AI Gateway and Jev](https://vercel.com/kb/guide/typesafe-jev-and-ai-sdk)
 
 ## License
