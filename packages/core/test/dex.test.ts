@@ -68,14 +68,14 @@ describe("createDex", () => {
     ).toThrow(/routing.default/);
   });
 
-  it("rejects providers without choice capability", () => {
+  it("rejects providers without any decision capability", () => {
     const badProvider = {
       ...makeProvider("p1"),
-      manifest: { ...makeProvider("p1").manifest, capabilities: ["score"] as unknown as ["choice", ...string[]] },
+      manifest: { ...makeProvider("p1").manifest, capabilities: ["multimodal"] as unknown as ["choice", ...string[]] },
     };
     expect(() =>
       createDex({ providers: [badProvider], routing: defaultRouting }),
-    ).toThrow(/choice/);
+    ).toThrow(/decision question capability/);
   });
 });
 
@@ -452,5 +452,75 @@ describe("Dex.choice", () => {
       normal: 0,
       needs_review: 0,
     });
+  });
+});
+
+describe("multi-primitive routing", () => {
+  const mixedRequest: ChoiceRequest = {
+    state: "call recording",
+    questions: {
+      mentions_launch: {
+        type: "noul",
+        instructions: "Is the speaker discussing a product campaign launch?",
+      },
+      delivery: {
+        type: "score",
+        instructions: "How fluent and prepared does the speaker sound?",
+        criteria: ["Hesitant.", "Mostly steady.", "Polished and confident."],
+      },
+    },
+  };
+
+  it("excludes choice-only providers from noul/score requests", async () => {
+    const dex = createDex({ providers: [makeProvider("p1")], routing: defaultRouting });
+    await expect(dex.choice(mixedRequest)).rejects.toMatchObject({
+      code: "NO_ELIGIBLE_PROVIDER",
+    });
+  });
+
+  it("routes mixed-type requests to a provider that declares every type", async () => {
+    const response: ChoiceResponse = {
+      model: "gemini-decision-1",
+      answers: {
+        mentions_launch: { type: "noul", noul: 0.94, confidence: 0.94 },
+        delivery: {
+          type: "score",
+          score: 1.12,
+          confidence: 0.83,
+          probabilities: { "0": 0.03, "1": 0.83, "2": 0.14 },
+          legend: {
+            "0": "Hesitant.",
+            "1": "Mostly steady.",
+            "2": "Polished and confident.",
+          },
+        },
+      },
+      usage: { input_tokens: 120, output_tokens: 0 },
+    };
+    const provider: ChoiceProvider = {
+      manifest: {
+        id: "p1",
+        apiVersion: "yueli-dex-plugin/v1",
+        kind: "provider",
+        version: "0.1.0",
+        capabilities: ["choice", "noul", "score", "multimodal"],
+      },
+      health: async () => ({ available: true }),
+      execute: async () => response,
+    };
+    const dex = createDex({ providers: [provider], routing: defaultRouting });
+
+    const result = await dex.choice(mixedRequest);
+    expect(result.answers.mentions_launch).toEqual({
+      type: "noul",
+      noul: 0.94,
+      confidence: 0.94,
+    });
+    const delivery = result.answers.delivery;
+    expect(delivery.type).toBe("score");
+    if (delivery.type === "score") {
+      expect(delivery.score).toBe(1.12);
+      expect(delivery.probabilities["1"]).toBe(0.83);
+    }
   });
 });

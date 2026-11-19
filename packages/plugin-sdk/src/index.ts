@@ -26,10 +26,33 @@ export interface ChoiceQuestion {
   readonly criteria: Readonly<Record<string, JsonValue>>;
 }
 
+/** Optional yes/no criteria, mirroring the Decisions API noul question shape. */
+export interface NoulCriteria {
+  readonly true_description?: string;
+  readonly false_description?: string;
+}
+
+/** Yes/no question. The answer is the calibrated probability that it holds. */
+export interface NoulQuestion {
+  readonly type: "noul";
+  readonly instructions: JsonValue;
+  readonly criteria?: NoulCriteria;
+}
+
+/** Ordered rubric question. Levels are lowest first; index 0 is the lowest. */
+export interface ScoreQuestion {
+  readonly type: "score";
+  readonly instructions: JsonValue;
+  readonly criteria: readonly string[];
+}
+
+export type DecisionQuestion = ChoiceQuestion | NoulQuestion | ScoreQuestion;
+export type DecisionQuestionType = DecisionQuestion["type"];
+
 export interface ChoiceRequest {
   readonly state: JsonValue;
   readonly model?: string;
-  readonly questions: Readonly<Record<string, ChoiceQuestion>>;
+  readonly questions: Readonly<Record<string, DecisionQuestion>>;
 }
 
 export interface ChoiceAnswer {
@@ -39,14 +62,45 @@ export interface ChoiceAnswer {
   readonly probabilities: Readonly<Record<string, number>>;
 }
 
+export interface NoulAnswer {
+  readonly type: "noul";
+  /** Probability that the condition holds. */
+  readonly noul: number;
+  readonly confidence: number;
+}
+
+export interface ScoreAnswer {
+  readonly type: "score";
+  /** Probability-weighted average of the level indices (may fall between levels). */
+  readonly score: number;
+  readonly confidence: number;
+  /** Level index as a string ("0", "1", …) mapped to its probability; sums to 1. */
+  readonly probabilities: Readonly<Record<string, number>>;
+  /** Level index mapped back to its description, when the provider returns it. */
+  readonly legend?: Readonly<Record<string, string>>;
+}
+
+export type DecisionAnswer = ChoiceAnswer | NoulAnswer | ScoreAnswer;
+
+export interface DecisionUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  /** Optional per-modality breakdown (text, image, audio, …). */
+  readonly input_tokens_by_modality?: readonly {
+    readonly modality: string;
+    readonly tokens: number;
+  }[];
+}
+
 export interface ChoiceResponse {
   readonly model: string;
-  readonly answers: Readonly<Record<string, ChoiceAnswer>>;
-  readonly usage?: {
-    readonly input_tokens: number;
-    readonly output_tokens: number;
-  };
+  readonly answers: Readonly<Record<string, DecisionAnswer>>;
+  readonly usage?: DecisionUsage;
 }
+
+/** Aliases for callers that treat the contract as a general decision API. */
+export type DecisionRequest = ChoiceRequest;
+export type DecisionResponse = ChoiceResponse;
 
 /* ------------------------------------------------------------------ */
 /* Provider contract                                                   */
@@ -57,7 +111,12 @@ export interface ProviderManifest {
   readonly apiVersion: "yueli-dex-plugin/v1";
   readonly kind: "provider";
   readonly version: string;
-  readonly capabilities: readonly ["choice", ...string[]];
+  /**
+   * Question types the provider can answer first, followed by any additional
+   * capability tags (e.g. "multimodal"). Routing only sends a request to a
+   * provider whose capabilities cover every question type in the request.
+   */
+  readonly capabilities: readonly [DecisionQuestionType, ...string[]];
 }
 
 export interface ProviderHealthContext {

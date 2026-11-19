@@ -429,7 +429,7 @@ export function TemplateTester() {
                     {e2eResult.response ? (
                       <div className="mt-1 opacity-80">
                         {Object.entries(e2eResult.response.answers)
-                          .map(([q, a]) => `${q}=${a.choice} (conf ${a.confidence})`)
+                          .map(([q, a]) => `${q}=${a.type === "choice" ? a.choice : a.type} (conf ${a.confidence})`)
                           .join(" · ")}
                       </div>
                     ) : null}

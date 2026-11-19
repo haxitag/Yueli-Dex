@@ -579,6 +579,8 @@ export function createRuleEngine(ruleSets: readonly RuleSet[]): RuleEngine {
             // template — silently skip without participating in conflict
             // detection.
             if (!question) break;
+            // Only the choice primitive can be pinned to a named option.
+            if (question.type !== "choice") break;
             if (!Object.prototype.hasOwnProperty.call(question.criteria, match.action.choice)) {
               break;
             }

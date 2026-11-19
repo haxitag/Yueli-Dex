@@ -127,7 +127,8 @@ function validateProposalAgainstTemplate(
   // Compare each proposed question against the template
   for (const choice of template.choices) {
     const proposedQ = proposed.questions[choice.id];
-    if (!proposedQ) continue;
+    // Template criteria are choice-based; ignore other primitives.
+    if (!proposedQ || proposedQ.type !== "choice") continue;
 
     // Check criteria changes
     const templateKeys = Object.keys(choice.criteria);

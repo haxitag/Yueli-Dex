@@ -123,6 +123,8 @@ export function createMockJevProvider(config: MockJevConfig = {}): ChoiceProvide
     let totalOutput = 0;
 
     for (const [questionId, question] of Object.entries(request.questions)) {
+      // This mock implements the choice primitive only.
+      if (question.type !== "choice") continue;
       const choices = Object.keys(question.criteria);
       if (choices.length === 0) continue;
 

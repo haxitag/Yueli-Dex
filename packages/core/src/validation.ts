@@ -3,12 +3,20 @@ import type {
   ChoiceQuestion,
   ChoiceRequest,
   ChoiceResponse,
+  DecisionAnswer,
+  DecisionQuestion,
+  DecisionUsage,
   JsonValue,
+  NoulCriteria,
+  NoulQuestion,
+  ScoreQuestion,
 } from "@haxitag/yueli-dex-plugin-sdk";
 import { DexError } from "./errors.js";
 import { MAX_CANONICALIZE_DEPTH } from "./utils.js";
 
 const MAX_OPTIONS = 255;
+const MIN_SCORE_LEVELS = 2;
+const MAX_SCORE_LEVELS = 255;
 const PROBABILITY_TOLERANCE = 1e-6;
 
 /* ------------------------------------------------------------------ */
@@ -63,24 +71,24 @@ export function validateChoiceRequest(
       "Choice request must include at least one question",
       {
         decisionId,
-        recoveryHint: "Add a question of type 'choice' with criteria options.",
+        recoveryHint: "Add a question of type 'noul', 'choice', or 'score'.",
       },
     );
   }
 
-  const validatedQuestions: Record<string, ChoiceQuestion> = {};
+  const validatedQuestions: Record<string, DecisionQuestion> = {};
   for (const [qid, rawQuestion] of Object.entries(questions)) {
-    validatedQuestions[qid] = validateChoiceQuestion(qid, rawQuestion, decisionId);
+    validatedQuestions[qid] = validateQuestion(qid, rawQuestion, decisionId);
   }
 
   return { state, model, questions: validatedQuestions };
 }
 
-function validateChoiceQuestion(
+function validateQuestion(
   questionId: string,
   raw: unknown,
   decisionId: string,
-): ChoiceQuestion {
+): DecisionQuestion {
   if (!isPlainObject(raw)) {
     throw new DexError(
       "INVALID_CHOICE_REQUEST",
@@ -88,33 +96,56 @@ function validateChoiceQuestion(
       { decisionId },
     );
   }
-  const { type, instructions, criteria } = raw as Record<string, unknown>;
 
-  if (type !== "choice") {
-    throw new DexError(
-      "INVALID_CHOICE_REQUEST",
-      `Question "${questionId}" must have type "choice"`,
-      {
-        decisionId,
-        recoveryHint: "DEX v1 only supports the Choice primitive.",
-      },
-    );
+  switch ((raw as Record<string, unknown>).type) {
+    case "choice":
+      return validateChoiceQuestion(questionId, raw, decisionId);
+    case "noul":
+      return validateNoulQuestion(questionId, raw, decisionId);
+    case "score":
+      return validateScoreQuestion(questionId, raw, decisionId);
+    default:
+      throw new DexError(
+        "INVALID_CHOICE_REQUEST",
+        `Question "${questionId}" must have type "noul", "choice", or "score"`,
+        {
+          decisionId,
+          recoveryHint:
+            "Supported question types: noul (yes/no), choice (pick one), score (ordered rubric).",
+        },
+      );
   }
+}
 
-  if (instructions === undefined) {
+function validateInstructions(
+  questionId: string,
+  raw: unknown,
+  decisionId: string,
+): JsonValue {
+  if (raw === undefined) {
     throw new DexError(
       "INVALID_CHOICE_REQUEST",
       `Question "${questionId}" must include instructions`,
       { decisionId },
     );
   }
-  if (!isJsonValue(instructions)) {
+  if (!isJsonValue(raw)) {
     throw new DexError(
       "INVALID_CHOICE_REQUEST",
       `Question "${questionId}" instructions must be a JSON value`,
       { decisionId },
     );
   }
+  return raw;
+}
+
+function validateChoiceQuestion(
+  questionId: string,
+  raw: Record<string, unknown>,
+  decisionId: string,
+): ChoiceQuestion {
+  const instructions = validateInstructions(questionId, raw.instructions, decisionId);
+  const criteria = raw.criteria;
 
   if (!isPlainObject(criteria)) {
     throw new DexError(
@@ -160,9 +191,90 @@ function validateChoiceQuestion(
 
   return {
     type: "choice",
-    instructions: instructions as JsonValue,
+    instructions,
     criteria: criteria as Record<string, JsonValue>,
   };
+}
+
+function validateNoulQuestion(
+  questionId: string,
+  raw: Record<string, unknown>,
+  decisionId: string,
+): NoulQuestion {
+  const instructions = validateInstructions(questionId, raw.instructions, decisionId);
+
+  if (raw.criteria === undefined) {
+    return { type: "noul", instructions };
+  }
+  if (!isPlainObject(raw.criteria)) {
+    throw new DexError(
+      "INVALID_CHOICE_REQUEST",
+      `Question "${questionId}" noul criteria must be an object`,
+      { decisionId },
+    );
+  }
+
+  const criteria = raw.criteria as Record<string, unknown>;
+  const validated: { true_description?: string; false_description?: string } = {};
+  for (const [key, value] of Object.entries(criteria)) {
+    if (key !== "true_description" && key !== "false_description") {
+      throw new DexError(
+        "INVALID_CHOICE_REQUEST",
+        `Question "${questionId}" noul criteria only supports "true_description" and "false_description"`,
+        { decisionId },
+      );
+    }
+    if (typeof value !== "string") {
+      throw new DexError(
+        "INVALID_CHOICE_REQUEST",
+        `Question "${questionId}" noul criteria "${key}" must be a string`,
+        { decisionId },
+      );
+    }
+    validated[key] = value;
+  }
+
+  return { type: "noul", instructions, criteria: validated as NoulCriteria };
+}
+
+function validateScoreQuestion(
+  questionId: string,
+  raw: Record<string, unknown>,
+  decisionId: string,
+): ScoreQuestion {
+  const instructions = validateInstructions(questionId, raw.instructions, decisionId);
+
+  if (!Array.isArray(raw.criteria)) {
+    throw new DexError(
+      "INVALID_CHOICE_REQUEST",
+      `Question "${questionId}" score criteria must be an array of level descriptions`,
+      { decisionId, recoveryHint: "Order levels from lowest to highest." },
+    );
+  }
+  if (
+    raw.criteria.length < MIN_SCORE_LEVELS ||
+    raw.criteria.length > MAX_SCORE_LEVELS
+  ) {
+    throw new DexError(
+      "INVALID_CHOICE_REQUEST",
+      `Question "${questionId}" has ${raw.criteria.length} score levels, expected ${MIN_SCORE_LEVELS}-${MAX_SCORE_LEVELS}`,
+      { decisionId },
+    );
+  }
+
+  const levels: string[] = [];
+  for (const level of raw.criteria) {
+    if (typeof level !== "string" || level.trim() === "") {
+      throw new DexError(
+        "INVALID_CHOICE_REQUEST",
+        `Question "${questionId}" score levels must be non-empty strings`,
+        { decisionId },
+      );
+    }
+    levels.push(level);
+  }
+
+  return { type: "score", instructions, criteria: levels };
 }
 
 /* ------------------------------------------------------------------ */
@@ -221,9 +333,9 @@ export function validateChoiceResponse(
     );
   }
 
-  const validatedAnswers: Record<string, ChoiceAnswer> = {};
+  const validatedAnswers: Record<string, DecisionAnswer> = {};
   for (const qid of requestQuestionIds) {
-    validatedAnswers[qid] = validateChoiceAnswer(
+    validatedAnswers[qid] = validateAnswer(
       qid,
       request.questions[qid],
       (answers as Record<string, unknown>)[qid],
@@ -242,22 +354,35 @@ export function validateChoiceResponse(
         { decisionId, providerId },
       );
     }
+    const breakdown = (usage as Record<string, unknown>).input_tokens_by_modality;
+    if (breakdown !== undefined) {
+      if (!Array.isArray(breakdown) || !breakdown.every((entry) =>
+        isPlainObject(entry) &&
+        typeof (entry as Record<string, unknown>).modality === "string" &&
+        typeof (entry as Record<string, unknown>).tokens === "number")) {
+        throw new DexError(
+          "INVALID_CHOICE_RESPONSE",
+          `Provider "${providerId}" usage.input_tokens_by_modality must be an array of { modality, tokens }`,
+          { decisionId, providerId },
+        );
+      }
+    }
   }
 
   return {
     model,
     answers: validatedAnswers,
-    usage: usage as ChoiceResponse["usage"],
+    ...(usage !== undefined ? { usage: usage as unknown as DecisionUsage } : {}),
   };
 }
 
-function validateChoiceAnswer(
+function validateAnswer(
   questionId: string,
-  question: ChoiceQuestion,
+  question: DecisionQuestion,
   rawAnswer: unknown,
   decisionId: string,
   providerId: string,
-): ChoiceAnswer {
+): DecisionAnswer {
   if (!isPlainObject(rawAnswer)) {
     throw new DexError(
       "INVALID_CHOICE_RESPONSE",
@@ -266,15 +391,33 @@ function validateChoiceAnswer(
     );
   }
 
-  const { type, choice, confidence, probabilities } = rawAnswer as Record<string, unknown>;
-
-  if (type !== "choice") {
+  const answerType = (rawAnswer as Record<string, unknown>).type;
+  if (answerType !== question.type) {
     throw new DexError(
       "INVALID_CHOICE_RESPONSE",
-      `Provider "${providerId}" answer for "${questionId}" must have type "choice"`,
+      `Provider "${providerId}" answer for "${questionId}" must have type "${question.type}", got "${String(answerType)}"`,
       { decisionId, providerId },
     );
   }
+
+  switch (question.type) {
+    case "choice":
+      return validateChoiceAnswer(questionId, question, rawAnswer, decisionId, providerId);
+    case "noul":
+      return validateNoulAnswer(questionId, rawAnswer, decisionId, providerId);
+    case "score":
+      return validateScoreAnswer(questionId, question, rawAnswer, decisionId, providerId);
+  }
+}
+
+function validateChoiceAnswer(
+  questionId: string,
+  question: ChoiceQuestion,
+  rawAnswer: Record<string, unknown>,
+  decisionId: string,
+  providerId: string,
+): ChoiceAnswer {
+  const { choice, confidence, probabilities } = rawAnswer;
 
   if (typeof choice !== "string") {
     throw new DexError(
@@ -297,14 +440,7 @@ function validateChoiceAnswer(
     );
   }
 
-  if (typeof confidence !== "number" || !Number.isFinite(confidence) ||
-      confidence < 0 || confidence > 1) {
-    throw new DexError(
-      "INVALID_CHOICE_RESPONSE",
-      `Provider "${providerId}" answer for "${questionId}" confidence must be in [0, 1]`,
-      { decisionId, providerId },
-    );
-  }
+  assertConfidence(questionId, confidence, decisionId, providerId);
 
   if (!isPlainObject(probabilities)) {
     throw new DexError(
@@ -314,7 +450,7 @@ function validateChoiceAnswer(
     );
   }
 
-  const probKeys = Object.keys(probabilities as Record<string, unknown>);
+  const probKeys = Object.keys(probabilities);
   const criterionSet = new Set(criterionKeys);
   const probSet = new Set(probKeys);
 
@@ -329,7 +465,7 @@ function validateChoiceAnswer(
 
   let sum = 0;
   for (const key of criterionKeys) {
-    const p = (probabilities as Record<string, unknown>)[key];
+    const p = probabilities[key];
     if (typeof p !== "number" || !Number.isFinite(p) || p < 0) {
       throw new DexError(
         "INVALID_CHOICE_RESPONSE",
@@ -351,9 +487,140 @@ function validateChoiceAnswer(
   return {
     type: "choice",
     choice,
-    confidence,
+    confidence: confidence as number,
     probabilities: probabilities as Record<string, number>,
   };
+}
+
+function validateNoulAnswer(
+  questionId: string,
+  rawAnswer: Record<string, unknown>,
+  decisionId: string,
+  providerId: string,
+): DecisionAnswer {
+  const { noul, confidence } = rawAnswer;
+
+  if (typeof noul !== "number" || !Number.isFinite(noul) || noul < 0 || noul > 1) {
+    throw new DexError(
+      "INVALID_CHOICE_RESPONSE",
+      `Provider "${providerId}" answer for "${questionId}" noul must be in [0, 1]`,
+      { decisionId, providerId },
+    );
+  }
+
+  assertConfidence(questionId, confidence, decisionId, providerId);
+
+  return { type: "noul", noul, confidence: confidence as number };
+}
+
+function validateScoreAnswer(
+  questionId: string,
+  question: ScoreQuestion,
+  rawAnswer: Record<string, unknown>,
+  decisionId: string,
+  providerId: string,
+): DecisionAnswer {
+  const { score, confidence, probabilities, legend } = rawAnswer;
+  const levels = question.criteria.length;
+  const maxScore = levels - 1;
+
+  if (typeof score !== "number" || !Number.isFinite(score) ||
+      score < 0 || score > maxScore + PROBABILITY_TOLERANCE) {
+    throw new DexError(
+      "INVALID_CHOICE_RESPONSE",
+      `Provider "${providerId}" answer for "${questionId}" score must be within [0, ${maxScore}]`,
+      { decisionId, providerId },
+    );
+  }
+
+  assertConfidence(questionId, confidence, decisionId, providerId);
+
+  if (!isPlainObject(probabilities)) {
+    throw new DexError(
+      "INVALID_CHOICE_RESPONSE",
+      `Provider "${providerId}" answer for "${questionId}" must include probabilities`,
+      { decisionId, providerId },
+    );
+  }
+
+  const expectedKeys = Array.from({ length: levels }, (_, i) => String(i));
+  const probKeys = Object.keys(probabilities);
+  const expectedSet = new Set(expectedKeys);
+  const probSet = new Set(probKeys);
+
+  if (probKeys.length !== expectedKeys.length ||
+      [...expectedSet].some((k) => !probSet.has(k))) {
+    throw new DexError(
+      "INVALID_CHOICE_RESPONSE",
+      `Provider "${providerId}" answer for "${questionId}" probability keys must be level indices "0".."${maxScore}"`,
+      { decisionId, providerId },
+    );
+  }
+
+  let sum = 0;
+  for (const key of expectedKeys) {
+    const p = probabilities[key];
+    if (typeof p !== "number" || !Number.isFinite(p) || p < 0) {
+      throw new DexError(
+        "INVALID_CHOICE_RESPONSE",
+        `Provider "${providerId}" answer for "${questionId}" probability for level "${key}" must be a finite non-negative number`,
+        { decisionId, providerId },
+      );
+    }
+    sum += p;
+  }
+
+  if (Math.abs(sum - 1) > PROBABILITY_TOLERANCE) {
+    throw new DexError(
+      "INVALID_CHOICE_RESPONSE",
+      `Provider "${providerId}" answer for "${questionId}" probabilities sum to ${sum}, expected 1`,
+      { decisionId, providerId },
+    );
+  }
+
+  if (legend !== undefined) {
+    if (!isPlainObject(legend)) {
+      throw new DexError(
+        "INVALID_CHOICE_RESPONSE",
+        `Provider "${providerId}" answer for "${questionId}" legend must be an object`,
+        { decisionId, providerId },
+      );
+    }
+    const legendKeys = Object.keys(legend);
+    if (legendKeys.length !== expectedKeys.length ||
+        legendKeys.some((k) => !expectedSet.has(k)) ||
+        legendKeys.some((k) => typeof legend[k] !== "string")) {
+      throw new DexError(
+        "INVALID_CHOICE_RESPONSE",
+        `Provider "${providerId}" answer for "${questionId}" legend must map every level index to a description`,
+        { decisionId, providerId },
+      );
+    }
+  }
+
+  return {
+    type: "score",
+    score,
+    confidence: confidence as number,
+    probabilities: probabilities as Record<string, number>,
+    ...(legend !== undefined ? { legend: legend as Record<string, string> } : {}),
+  };
+}
+
+function assertConfidence(
+  questionId: string,
+  confidence: unknown,
+  decisionId: string,
+  providerId: string,
+): void {
+  if (typeof confidence !== "number" || !Number.isFinite(confidence) ||
+      confidence < 0 || confidence > 1) {
+    throw new DexError(
+      "INVALID_CHOICE_RESPONSE",
+      `Provider "${providerId}" answer for "${questionId}" confidence must be in [0, 1]`,
+      { decisionId, providerId },
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -395,6 +662,11 @@ export function buildPinnedAnswer(
   if (!question) {
     throw new Error(`buildPinnedAnswer: unknown question "${questionId}"`);
   }
+  if (question.type !== "choice") {
+    throw new Error(
+      `buildPinnedAnswer: question "${questionId}" is type "${question.type}", not "choice"`,
+    );
+  }
   const criteria = question.criteria;
   if (!Object.prototype.hasOwnProperty.call(criteria, selectedChoice)) {
     throw new Error(
@@ -424,7 +696,7 @@ export function buildShortCircuitResponse(
   decisions: Readonly<Record<string, string>>,
 ): ChoiceResponse {
   const questionIds = Object.keys(request.questions);
-  const answers: Record<string, ChoiceAnswer> = {};
+  const answers: Record<string, DecisionAnswer> = {};
   for (const qid of questionIds) {
     const selected = decisions[qid];
     if (selected === undefined) {
@@ -450,9 +722,11 @@ export function applyPinnedAnswers(
   pinned: Readonly<Record<string, string>>,
 ): ChoiceResponse {
   if (Object.keys(pinned).length === 0) return response;
-  const answers: Record<string, ChoiceAnswer> = { ...response.answers };
+  const answers: Record<string, DecisionAnswer> = { ...response.answers };
   for (const [qid, choice] of Object.entries(pinned)) {
-    if (!Object.prototype.hasOwnProperty.call(request.questions, qid)) continue;
+    const question = request.questions[qid];
+    // Local rules can only pin the choice primitive; ignore anything else.
+    if (!question || question.type !== "choice") continue;
     answers[qid] = buildPinnedAnswer(request, qid, choice);
   }
   return { ...response, answers };

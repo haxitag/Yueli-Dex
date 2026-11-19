@@ -1,7 +1,7 @@
 /**
  * @haxitag/yueli-dex
  *
- * Yueli DEX — Choice-only Decision Execution Framework for AI Agents.
+ * Yueli DEX — typed Decision Execution Framework for AI Agents.
  *
  * Public API surface:
  * - createDex(config): Dex
@@ -19,15 +19,26 @@ export type {
   ChoiceQuestion,
   ChoiceRequest,
   ChoiceResponse,
+  DecisionAnswer,
+  DecisionQuestion,
+  DecisionQuestionType,
+  DecisionRequest,
+  DecisionResponse,
+  DecisionUsage,
   ContextProvider,
   ContextSnapshot,
   JsonValue,
   Modeler,
   ModelingProposal,
+  NoulAnswer,
+  NoulCriteria,
+  NoulQuestion,
   ProviderCallContext,
   ProviderHealth,
   ProviderHealthContext,
   ProviderManifest,
+  ScoreAnswer,
+  ScoreQuestion,
 } from "@haxitag/yueli-dex-plugin-sdk";
 
 // DEX public types

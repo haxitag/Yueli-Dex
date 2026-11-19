@@ -18,6 +18,8 @@ import type {
 import { generateDecisionId, hashRequest } from "./utils.js";
 import { applyPinnedAnswers, validateChoiceRequest } from "./validation.js";
 
+const DECISION_QUESTION_TYPES: readonly string[] = ["choice", "noul", "score"];
+
 /**
  * Create a DEX instance.
  *
@@ -53,10 +55,10 @@ export function createDex(config: DexConfig): Dex {
         { decisionId: "config" },
       );
     }
-    if (!p.manifest.capabilities.includes("choice")) {
+    if (!p.manifest.capabilities.some((c) => DECISION_QUESTION_TYPES.includes(c))) {
       throw new DexError(
         "NO_ELIGIBLE_PROVIDER",
-        `Provider "${p.manifest.id}" does not support the "choice" capability`,
+        `Provider "${p.manifest.id}" does not declare any decision question capability (${DECISION_QUESTION_TYPES.join(", ")})`,
         { decisionId: "config" },
       );
     }

@@ -2,6 +2,7 @@ import type {
   ChoiceProvider,
   ChoiceRequest,
   ChoiceResponse,
+  DecisionQuestionType,
 } from "@haxitag/yueli-dex-plugin-sdk";
 import { DexError, ProviderAttemptError, RouteExecutionFailure } from "./errors.js";
 import type {
@@ -223,8 +224,13 @@ export async function executeRoute(
   const remainingMs = (): number => Math.max(0, deadlineAt - Date.now());
   const retryableStatuses = new Set(policy.retryableStatusCodes ?? [429, 500, 502, 503, 504]);
 
+  // Every question type in the request must be supported by the provider.
+  const requiredTypes = new Set<DecisionQuestionType>(
+    Object.values(request.questions).map((q) => q.type),
+  );
+
   // Filter eligible providers
-  const eligible = await filterEligible(policy, deps, options.decisionId, remainingMs);
+  const eligible = await filterEligible(policy, deps, options.decisionId, remainingMs, requiredTypes);
   if (eligible.length === 0) {
     throw new RouteExecutionFailure(
       "NO_ELIGIBLE_PROVIDER",
@@ -389,6 +395,7 @@ async function filterEligible(
   deps: RouterDeps,
   _decisionId: string,
   remainingMs: () => number,
+  requiredTypes: ReadonlySet<DecisionQuestionType>,
 ): Promise<ChoiceProvider[]> {
   const eligible: ChoiceProvider[] = [];
   for (const provider of deps.providers) {
@@ -397,8 +404,8 @@ async function filterEligible(
     if (!policy.providerIds.includes(provider.manifest.id)) {
       continue;
     }
-    // Must declare choice capability
-    if (!provider.manifest.capabilities.includes("choice")) {
+    // Must declare every question type used by this request.
+    if (![...requiredTypes].every((type) => provider.manifest.capabilities.includes(type))) {
       continue;
     }
     // Circuit breaker
@@ -604,6 +611,19 @@ function normalizeProviderError(
       recoveryHint: "Retry later or reduce request rate.",
       cause: err,
     });
+  }
+  // Malformed requests, safety blocks, and payloads over the size limit are
+  // deterministic — retrying the same request cannot succeed.
+  if (status === 400 || status === 413 || status === 422) {
+    return new ProviderAttemptError(
+      "PROVIDER_INVALID_REQUEST",
+      `Provider "${providerId}" rejected the request (${status}): ${anyErr.message ?? ""}`.trim(),
+      {
+        decisionId, providerId, attempt,
+        recoveryHint: "Fix the request input or criteria; retrying will not help.",
+        cause: err,
+      },
+    );
   }
   if (status && status >= 500 && retryableStatuses.has(status)) {
     return new ProviderAttemptError("PROVIDER_FAILURE", `Provider "${providerId}" returned ${status}`, {

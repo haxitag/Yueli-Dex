@@ -56,6 +56,8 @@ function createCliMockProvider(id: string): ChoiceProvider {
         { type: "choice"; choice: string; confidence: number; probabilities: Record<string, number> }
       > = {};
       for (const [qid, q] of Object.entries(request.questions)) {
+        // This mock only implements the choice primitive (its manifest says so).
+        if (q.type !== "choice") continue;
         const choices = Object.keys(q.criteria);
         const first = choices[0] ?? "needs_review";
         const probabilities: Record<string, number> = {};
@@ -284,7 +286,8 @@ async function cmdFixtures(): Promise<number> {
           let matched = true;
           if (fixture.expected) {
             for (const [qid, expectedChoice] of Object.entries(fixture.expected)) {
-              const actual = response.answers[qid as never]?.choice;
+              const answer = response.answers[qid];
+              const actual = answer?.type === "choice" ? answer.choice : undefined;
               if (actual !== expectedChoice) matched = false;
             }
           }

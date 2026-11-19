@@ -15,6 +15,7 @@ export default defineConfig({
       "@haxitag/yueli-dex-provider-http": path.resolve(__dirname, "packages/provider-http/src"),
       "@haxitag/yueli-dex-provider-typesafe": path.resolve(__dirname, "packages/provider-typesafe/src"),
       "@haxitag/yueli-dex-provider-cloudflare": path.resolve(__dirname, "packages/provider-cloudflare/src"),
+      "@haxitag/yueli-dex-provider-google": path.resolve(__dirname, "packages/provider-google/src"),
       "@haxitag/yueli-dex-provider-vercel": path.resolve(__dirname, "packages/provider-vercel/src"),
       "@haxitag/yueli-dex-templates-core": path.resolve(__dirname, "packages/templates-core/src"),
     },

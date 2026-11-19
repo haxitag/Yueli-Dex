@@ -34,12 +34,62 @@ describe("validateChoiceRequest", () => {
     expect(() => validateChoiceRequest({ state: "x" }, DECISION_ID)).toThrow(/question/);
   });
 
-  it("rejects non-choice question type", () => {
+  it("rejects unknown question type", () => {
     const req = {
       state: "x",
-      questions: { q: { type: "score", instructions: "x", criteria: { a: "b" } } },
+      questions: { q: { type: "ranking", instructions: "x", criteria: { a: "b" } } },
     };
-    expect(() => validateChoiceRequest(req, DECISION_ID)).toThrow(/type "choice"/);
+    expect(() => validateChoiceRequest(req, DECISION_ID)).toThrow(/must have type/);
+  });
+
+  it("accepts noul and score questions alongside choice", () => {
+    const req = {
+      state: "audio clip",
+      questions: {
+        mentions_launch: {
+          type: "noul",
+          instructions: "Is the speaker discussing a product campaign launch?",
+        },
+        delivery: {
+          type: "score",
+          instructions: "How fluent and prepared does the speaker sound?",
+          criteria: ["Hesitant.", "Mostly steady.", "Polished and confident."],
+        },
+        route: {
+          type: "choice",
+          instructions: "Which team?",
+          criteria: { a: "A", b: "B" },
+        },
+      },
+    };
+    const result = validateChoiceRequest(req, DECISION_ID);
+    expect(Object.keys(result.questions)).toEqual(["mentions_launch", "delivery", "route"]);
+  });
+
+  it("rejects noul criteria with unsupported keys", () => {
+    const req = {
+      state: "x",
+      questions: {
+        q: { type: "noul", instructions: "x", criteria: { maybe: "unsure" } },
+      },
+    };
+    expect(() => validateChoiceRequest(req, DECISION_ID)).toThrow(/true_description/);
+  });
+
+  it("rejects score questions with fewer than two levels", () => {
+    const req = {
+      state: "x",
+      questions: { q: { type: "score", instructions: "x", criteria: ["Only level"] } },
+    };
+    expect(() => validateChoiceRequest(req, DECISION_ID)).toThrow(/2-255/);
+  });
+
+  it("rejects score questions with empty level descriptions", () => {
+    const req = {
+      state: "x",
+      questions: { q: { type: "score", instructions: "x", criteria: ["", "Fine"] } },
+    };
+    expect(() => validateChoiceRequest(req, DECISION_ID)).toThrow(/non-empty/);
   });
 
   it("rejects question with empty criteria", () => {
@@ -200,6 +250,128 @@ describe("validateChoiceResponse", () => {
     };
     const result = validateChoiceResponse(validRequest, response, DECISION_ID, "p1");
     expect(result.usage).toEqual({ input_tokens: 100, output_tokens: 10 });
+  });
+});
+
+describe("validateChoiceResponse (noul + score)", () => {
+  const mixedRequest: ChoiceRequest = {
+    state: "audio",
+    questions: {
+      mentions_launch: {
+        type: "noul",
+        instructions: "Is the speaker discussing a product campaign launch?",
+      },
+      delivery: {
+        type: "score",
+        instructions: "How fluent and prepared does the speaker sound?",
+        criteria: ["Hesitant.", "Mostly steady.", "Polished and confident."],
+      },
+    },
+  };
+
+  const validMixedResponse = {
+    model: "gemini-decision-1",
+    answers: {
+      mentions_launch: { type: "noul", noul: 0.94, confidence: 0.94 },
+      delivery: {
+        type: "score",
+        score: 1.12,
+        confidence: 0.83,
+        probabilities: { "0": 0.03, "1": 0.83, "2": 0.14 },
+        legend: {
+          "0": "Hesitant.",
+          "1": "Mostly steady.",
+          "2": "Polished and confident.",
+        },
+      },
+    },
+    usage: {
+      input_tokens: 120,
+      output_tokens: 0,
+      input_tokens_by_modality: [{ modality: "audio", tokens: 120 }],
+    },
+  };
+
+  it("accepts noul and score answers", () => {
+    const result = validateChoiceResponse(mixedRequest, validMixedResponse, DECISION_ID, "google");
+    expect(result.answers.mentions_launch).toEqual({
+      type: "noul",
+      noul: 0.94,
+      confidence: 0.94,
+    });
+    expect(result.answers.delivery.type).toBe("score");
+    expect(result.usage?.input_tokens).toBe(120);
+  });
+
+  it("rejects an answer whose type does not match the question", () => {
+    const response = {
+      ...validMixedResponse,
+      answers: {
+        ...validMixedResponse.answers,
+        mentions_launch: { type: "choice", choice: "yes", confidence: 0.9, probabilities: { yes: 1 } },
+      },
+    };
+    expect(() =>
+      validateChoiceResponse(mixedRequest, response, DECISION_ID, "google"),
+    ).toThrow(/must have type "noul"/);
+  });
+
+  it("rejects noul outside [0,1]", () => {
+    const response = {
+      ...validMixedResponse,
+      answers: {
+        ...validMixedResponse.answers,
+        mentions_launch: { type: "noul", noul: 1.2, confidence: 0.9 },
+      },
+    };
+    expect(() =>
+      validateChoiceResponse(mixedRequest, response, DECISION_ID, "google"),
+    ).toThrow(/noul/);
+  });
+
+  it("rejects a score above the highest level index", () => {
+    const response = {
+      ...validMixedResponse,
+      answers: {
+        ...validMixedResponse.answers,
+        delivery: { ...validMixedResponse.answers.delivery, score: 2.5 },
+      },
+    };
+    expect(() =>
+      validateChoiceResponse(mixedRequest, response, DECISION_ID, "google"),
+    ).toThrow(/score must be within/);
+  });
+
+  it("rejects score probability keys that are not level indices", () => {
+    const response = {
+      ...validMixedResponse,
+      answers: {
+        ...validMixedResponse.answers,
+        delivery: {
+          ...validMixedResponse.answers.delivery,
+          probabilities: { low: 0.2, mid: 0.5, high: 0.3 },
+        },
+      },
+    };
+    expect(() =>
+      validateChoiceResponse(mixedRequest, response, DECISION_ID, "google"),
+    ).toThrow(/level indices/);
+  });
+
+  it("rejects a legend that does not cover every level", () => {
+    const response = {
+      ...validMixedResponse,
+      answers: {
+        ...validMixedResponse.answers,
+        delivery: {
+          ...validMixedResponse.answers.delivery,
+          legend: { "0": "Hesitant." },
+        },
+      },
+    };
+    expect(() =>
+      validateChoiceResponse(mixedRequest, response, DECISION_ID, "google"),
+    ).toThrow(/legend/);
   });
 });
 

@@ -2,11 +2,11 @@
 
 > **From Options To Action**
 
-Yueli DEX (`@haxitag/yueli-dex`) is a Choice-only decision framework for AI agents. It preserves Jev's standard `Choice` request and response contract while adding local rules, installable decision-modeling templates, optional LLM-assisted modeling, and reliable routing across TypeSafe, Cloudflare, Vercel, and compatible self-hosted hosts.
+Yueli DEX (`@haxitag/yueli-dex`) is a typed decision framework for AI agents. It preserves Jev's standard `Choice` request and response contract while adding the `noul` (yes/no) and `score` (ordered rubric) primitives, local rules, installable decision-modeling templates, optional LLM-assisted modeling, and reliable routing across TypeSafe, Cloudflare, Google, Vercel, and compatible self-hosted hosts.
 
 ## Project status
 
-Core TypeScript packages are implemented and tested (159 tests across 11 test files): the SDK, plugin contracts, four provider adapters, a labeled base template pack with local rule sets, the CLI, and an interactive playground. Packages build from source; npm publication is pending.
+Core TypeScript packages are implemented and tested (211 tests across 14 test files): the SDK, plugin contracts, five provider adapters, a labeled base template pack with local rule sets, the CLI, and an interactive playground. Packages build from source; npm publication is pending.
 
 ## 核心执行策略：本地规则优先
 
@@ -31,9 +31,9 @@ Core TypeScript packages are implemented and tested (159 tests across 11 test fi
 
 ## What v1 supports
 
-- Jev `Choice` only — not `Score`, `Noul`, or generic generated text.
-- The standard Choice inputs: `state`, optional `model`, and `questions` with `type`, `instructions`, and `criteria`.
-- The standard Choice outputs: `model`, `answers`, selected `choice`, `confidence`, `probabilities`, and optional `usage`.
+- Three decision primitives: `noul` (yes/no), `choice` (pick one), and `score` (ordered rubric) — no generic generated text.
+- Shared inputs: `state`, optional `model`, and `questions` with `type`, `instructions`, and type-specific `criteria` (`noul`: optional true/false descriptions; `choice`: option map; `score`: ordered level array).
+- Typed outputs: `model`, `answers`, plus `noul`/`confidence`, `choice`/`probabilities`/`confidence`, or `score`/`probabilities`/`legend`/`confidence`, and optional `usage`.
 - Local declarative rules (pre-routing short-circuit / reject / route / constrain), scenario templates with 四维度标签, optional LLM modeling proposals, and read-only context providers.
 - Provider routing that considers explicit policy, configured budget, observed latency, health, retry, circuit breaking, and fallback.
 - An `ActionIntent` sidecar. DEX does not execute business actions, tool calls, or repository code.
@@ -74,6 +74,7 @@ const intents = dex.templates.toActionIntent({ template: "support-triage", reque
 | [`@haxitag/yueli-dex`](packages/core) | Choice API、校验、规则引擎、路由、回执、插件注册 |
 | [`@haxitag/yueli-dex-plugin-sdk`](packages/plugin-sdk) | 四类插件的版本化契约（provider / template-pack / modeler / context-provider） |
 | [`@haxitag/yueli-dex-provider-*`](packages/provider-typesafe) | TypeSafe / Cloudflare（Clef 与 Clef-flash）/ Vercel / HTTP 四种 host 适配器（仅传输与鉴权） |
+| [`@haxitag/yueli-dex-provider-google`](packages/provider-google) | Google Gemini Decisions：`noul` / `choice` / `score` 三原语 + 文本/PDF/图片/音频/视频共享输入 |
 | [`@haxitag/yueli-dex-templates-core`](packages/templates-core) | 基础模板包：16 个场景模板（覆盖 6 大决策模式，四维度标签）+ 本地规则集 + 调用示例生成器 |
 | [`@haxitag/yueli-dex-cli`](packages/cli) | 校验、provider 探测、fixture 执行 |
 | `@haxitag/yueli-dex-playground` | 交互式调试器（见下） |
@@ -109,6 +110,101 @@ await dex.choice({ ...request, model: "clef-flash" });
 ```
 
 模型优先级：`request.model` > provider `config.model` > `clef`。支持 Workers AI binding（Worker 运行时零 REST 开销）与 Account REST 双通道；详见 [Clef 集成指南](docs/2026-10-06-clef-integration.md)。
+
+## Google Gemini Decisions API 接入
+
+Google [Gemini Decisions API](https://aistudio.google.com/docs/decisions-api) 通过 `@haxitag/yueli-dex-provider-google` 一等接入：一次请求可在同一个共享输入上混合 `noul`、`choice`、`score` 三类问题，输入支持文本、PDF、图片、音频和视频，模型 `gemini-decision-1` 单次前向返回校准概率，不产生输出 token。
+
+```ts
+import { createDex } from "@haxitag/yueli-dex";
+import { createGoogleProvider } from "@haxitag/yueli-dex-provider-google";
+
+const dex = createDex({
+  providers: [createGoogleProvider({ apiKey: process.env.GEMINI_API_KEY })],
+  routing: {
+    default: {
+      providerIds: ["google-gemini-decision"],
+      maxAttempts: 2,
+      circuitFailureThreshold: 3,
+      circuitCooldownMs: 60_000,
+    },
+  },
+});
+
+const response = await dex.choice({
+  model: "gemini-decision-1",
+  // 文本直接放字符串；多模态放 Content block 数组；其他 JSON 会被序列化为文本
+  state: [
+    {
+      type: "audio",
+      uri: "https://storage.googleapis.com/generativeai-downloads/audio/rehearsing.wav",
+      mime_type: "audio/wav",
+    },
+  ],
+  questions: {
+    mentions_launch: {
+      type: "noul",
+      instructions: "Is the speaker talking about a product campaign launch?",
+    },
+    delivery: {
+      type: "score",
+      instructions: "How fluent and prepared does the speaker sound?",
+      criteria: [
+        "Hesitant, searching for notes, or self-correcting.",
+        "Mostly steady with minor pauses.",
+        "Polished, fluent, and confident throughout.",
+      ],
+    },
+    next_queue: {
+      type: "choice",
+      instructions: "Which queue should handle this recording?",
+      criteria: { qa: "Quality review.", sales: "Outbound campaign." },
+    },
+  },
+});
+
+const launch = response.answers.mentions_launch; // { type: "noul", noul, confidence }
+const delivery = response.answers.delivery;      // { type: "score", score, probabilities, legend, confidence }
+```
+
+**映射与门控**：
+
+- `state`：字符串 → 文本输入；媒体 block 数组 → 原样多模态输入；其余 JSON → `JSON.stringify` 后作为文本。
+- `model` 优先级：`request.model` > provider `config.model` > `gemini-decision-1`。
+- `usage`：`total_input_tokens` / `total_output_tokens` 映射为 `input_tokens` / `output_tokens`，并保留 `input_tokens_by_modality`。
+- 路由按请求中的问题类型做能力门控：只声明 `["choice"]` 的 provider 不会被派发 `noul` / `score` 请求。
+- 问题 key 必须匹配 `[A-Za-z0-9_-]{1,64}`；不符合该格式时会在本地直接报 `400`，不发起网络请求。
+
+**行为边界**（来自官方文档）：`noul` 概率固定在 0.01–0.99（阈值不要设成 >0.99）；`choice` 选项键按字母序排序（兜底项用 `other`，不要 `none_of_the_above`）；`score` 是等级索引的加权平均，取离散等级需对 `probabilities` 取 argmax；安全拦截返回 HTTP 400，属于不可重试错误；不支持 Batch、上下文缓存、`gs://` 和 YouTube URL。
+
+## 验证与实测结果
+
+### 真实端到端冒烟（2026-11-19）
+
+一次 `dex.choice` 调用，输入为官方示例音频 `rehearsing.wav`，同一请求混合三种问题类型：
+
+| 问题类型 | 返回值 | confidence | 关键概率 |
+| --- | --- | --- | --- |
+| `noul` | `0.9028`（是） | `0.9028` | — |
+| `choice` | `speech` | `0.9074` | `speech` 0.907 / `other` 0.082 / `interview` 0.011 |
+| `score` | `0.152`（等级 0 主导） | `0.8611` | L0 0.861 / L1 0.126 / L2 0.013 |
+
+请求级指标：端到端 **1845 ms**；输入 **2216 tokens**（text 367 + audio 1849）；输出 **0 tokens**；模型 `gemini-decision-1`。
+
+> 单次样本，包含网络 RTT 与媒体拉取，不等同于模型的纯前向耗时，也不构成性能基准。
+
+### 自动化测试覆盖
+
+| 包 | 测试文件 | 用例数 |
+| --- | ---: | ---: |
+| `core` | 9 | 137 |
+| `provider-google` | 1 | 20 |
+| `provider-cloudflare` | 2 | 20 |
+| `provider-http` | 1 | 9 |
+| `templates-core` | 1 | 25 |
+| **合计** | **14** | **211** |
+
+> `provider-cloudflare` 的 e2e 用例使用本地 fixture server 模拟 Workers AI，并非真实线上调用；目前只有 `provider-google` 完成了真实 API 冒烟。
 
 ## Playground：场景用例的实际调用验证
 
@@ -148,6 +244,7 @@ cd packages/playground && npm run dev   # http://localhost:34567
 - [TypeSafe HTTP quick start](https://docs.typesafe.ai/introduction/quickstart)
 - [TypeSafe agent skill](https://docs.typesafe.ai/agent-skill)（对照：官方 skill 只教自家 API；本项目的 skill 覆盖四种 host + 建模 + 插件架构）
 - [Cloudflare Clef decision models](https://blog.cloudflare.com/clef-decision-models/)（开源权重：[Cloudflare/clef](https://huggingface.co/Cloudflare/clef)；模型文档：[developers.cloudflare.com/workers-ai/models/clef](https://developers.cloudflare.com/workers-ai/models/clef/)）
+- [Gemini Decisions API](https://aistudio.google.com/docs/decisions-api)（模型：[Gemini Decision 1](https://aistudio.google.com/docs/models/gemini-decision-1)；发布说明：[blog.google](https://blog.google/innovation-and-ai/technology/developers-tools/gemini-decisions-api/)）
 - [Vercel AI Gateway and Jev](https://vercel.com/kb/guide/typesafe-jev-and-ai-sdk)
 
 ## License

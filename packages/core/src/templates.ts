@@ -430,7 +430,8 @@ export function createTemplateRegistry(
 
       for (const [qid, qactions] of Object.entries(compiled.actions)) {
         const answer = response.answers[qid];
-        if (!answer) continue;
+        // ActionIntent mappings are choice-based; skip other primitives.
+        if (!answer || answer.type !== "choice") continue;
         const intentDef = qactions[answer.choice];
         if (!intentDef || !isPlainObject(intentDef)) continue;
 
